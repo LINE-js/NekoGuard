@@ -1,0 +1,9 @@
+# 複製至 config.yaml 後設定；此範例不應存放真實權杖。
+# NEKOGUARD_API_TOKEN 會優先於 api.token；空白權杖無法啟動。
+api:
+  # 僅本機回送位址可使用 ws，遠端必須使用 wss；路徑固定為 /api/ws。
+  url: ws://127.0.0.1:3789/api/ws
+  token: ''
+detection:
+  # 模型估計達到此百分比才通知管理員；範圍為 0 到 100。
+  thresholdPercent: 70
