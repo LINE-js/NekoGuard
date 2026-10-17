@@ -1,0 +1,6 @@
+{
+  "repository": "https://github.com/JS-PACKAGE/LINE.js",
+  "commit": "8f1e4813dd69593fec06924744913ea1f7b224f3",
+  "version": "1.6.5",
+  "capability": "chat:admins"
+}
