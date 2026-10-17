@@ -61,10 +61,12 @@ detection:
 `NEKOGUARD_API_TOKEN` 環境變數可覆蓋 `api.token`；空 Token 會拒絕啟動。`config.yaml` 已列入 `.gitignore`，請保持權限 `600`。遠端連線必須使用 `wss://`，只有本機回送位址允許 `ws://`；URL 不得夾帶金鑰、query 或 fragment。
 
 ```sh
-npm start
-# 或使用另一份設定
-npm start -- --config /path/to/config.yaml
+./start.sh
+# 或使用另一份設定（相對路徑以 NekoGuard 目錄為基準）
+./start.sh --config /path/to/config.yaml
 ```
+
+`start.sh` 會檢查 Node.js ≥ 22 與 npm，每次依 lockfile 安裝依賴（含編譯需要的 devDependencies）、編譯，再啟動程序；任一步失敗就停止。可從其他目錄呼叫，不會建立或覆蓋 `config.yaml`，也不會自動安裝 Node.js、套用 LINE.js 補丁或啟動 LINE.js。已安裝及編譯完成時，也可用 `npm start` 直接啟動。
 
 設定修改後重新啟動外掛。看見 `MONITORING_READY` 表示 LINE 已登入且後端支援管理員擴充；`SCAM_ALERT_SENT probability=70% admins=20/21` 表示一批通知已由 LINE.js 確認送出（不是管理員已讀）。`SIGINT`／`SIGTERM` 可停止程序。
 
