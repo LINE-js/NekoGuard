@@ -18,48 +18,62 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  const client = new ApiClient(config.api.url, config.api.token);
-  const guard = new ScamGuard(client, { thresholdPercent: config.detection.thresholdPercent });
   let stopped = false;
+  let retryTimer: NodeJS.Timeout | undefined;
+  let closeSession = () => {};
   const shutdown = (exitCode: number) => {
     if (stopped) return;
     stopped = true;
-    clearTimeout(helloDeadline);
+    clearTimeout(retryTimer);
     process.exitCode = exitCode;
-    guard.stop();
-    client.close();
+    closeSession();
   };
-  const helloDeadline = setTimeout(() => {
-    console.error("LINEJS_HELLO_TIMEOUT");
-    shutdown(1);
-  }, 25_000);
-  client.on("frame", (frame) => {
-    if (stopped) return;
-    if (frame.type === "hello") clearTimeout(helloDeadline);
-    guard.handle(frame);
-  });
-  client.on("fault", (code: string) => {
-    console.error(code);
-    shutdown(1);
-  });
-  client.on("disconnected", () => {
-    if (!stopped) console.error("WS_DISCONNECTED：監測已停止；請檢查 LINE.js 與 Token 後重新啟動。");
-    shutdown(1);
-  });
-  guard.on("notice", (code: string) => console.info(code));
-  guard.on("fatal", (code: string) => { console.error(code); shutdown(1); });
-  guard.on("alert", ({ probability, mentioned, total }) => {
-    console.info(`SCAM_ALERT_SENT probability=${probability * 100}% admins=${mentioned}/${total}`);
-  });
   process.once("SIGINT", () => shutdown(0));
   process.once("SIGTERM", () => shutdown(0));
-  try {
-    await client.connect();
-    if (!stopped) console.info(`NekoGuard 已連線，詐騙判定門檻 ${config.detection.thresholdPercent}%。`);
-  } catch {
-    if (!stopped) console.error("WS_CONNECT_FAILED");
-    shutdown(1);
-  }
+
+  const connect = async () => {
+    if (stopped) return;
+    const client = new ApiClient(config.api.url, config.api.token);
+    const guard = new ScamGuard(client, { thresholdPercent: config.detection.thresholdPercent });
+    let closed = false;
+    const helloDeadline = setTimeout(() => retry("LINEJS_HELLO_TIMEOUT"), 25_000);
+    closeSession = () => {
+      if (closed) return;
+      closed = true;
+      clearTimeout(helloDeadline);
+      guard.stop();
+      client.close();
+    };
+    const retry = (code: string) => {
+      if (closed || stopped) return;
+      closeSession();
+      console.error(`${code}：10 秒後重新連線。`);
+      retryTimer = setTimeout(() => { void connect(); }, 10_000);
+    };
+    client.on("frame", frame => {
+      if (closed || stopped) return;
+      if (frame.type === "hello") clearTimeout(helloDeadline);
+      guard.handle(frame);
+    });
+    client.on("fault", retry);
+    client.on("disconnected", () => retry("WS_DISCONNECTED"));
+    guard.on("notice", code => { if (!closed) console.info(code); });
+    guard.on("fatal", code => {
+      if (closed) return;
+      console.error(code);
+      shutdown(1);
+    });
+    guard.on("alert", ({ probability, mentioned, total }) => {
+      if (!closed) console.info(`SCAM_ALERT_SENT probability=${probability * 100}% admins=${mentioned}/${total}`);
+    });
+    try {
+      await client.connect();
+      if (!closed && !stopped) console.info(`NekoGuard 已連線，詐騙判定門檻 ${config.detection.thresholdPercent}%。`);
+    } catch {
+      retry("WS_CONNECT_FAILED");
+    }
+  };
+  await connect();
 }
 
 await main().catch(() => {
