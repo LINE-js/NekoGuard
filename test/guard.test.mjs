@@ -144,3 +144,61 @@ test('refuses unpatched backend instead of pretending all administrators were fo
   assert(h.notices.includes('LINEJS_ADMIN_EXTENSION_REQUIRED'));
   assert.deepEqual(h.calls, []);
 });
+
+test('a slow Jev result does not block another message from warning', async () => {
+  const slow = Promise.withResolvers();
+  const h = harness({ check: fields => fields.messageId === '1' ? slow.promise
+    : { type: 'scam:result', ...fields, analysis: { probability: 0.9 } } });
+  try {
+    h.guard.handle({ type: 'message', message: message(1) });
+    h.guard.handle({ type: 'message', message: message(2) });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(h.sends.map(send => send.replyTo), ['2']);
+  } finally {
+    slow.resolve({ type: 'scam:result', chatId, messageId: '1', analysis: { probability: 0.1 } });
+    await h.guard.whenIdle();
+  }
+});
+
+test('bounds outstanding analyses and drains remaining messages without loss', async () => {
+  const release = Promise.withResolvers();
+  let active = 0;
+  let peak = 0;
+  const checked = [];
+  const h = harness({ check: async fields => {
+    active++;
+    peak = Math.max(peak, active);
+    checked.push(fields.messageId);
+    await release.promise;
+    active--;
+    return { type: 'scam:result', ...fields, analysis: { probability: 0.1 } };
+  } });
+  try {
+    for (let i = 1; i <= 12; i++) h.guard.handle({ type: 'message', message: message(i) });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(active, 4);
+  } finally {
+    release.resolve();
+    await h.guard.whenIdle();
+  }
+  assert.equal(peak, 4);
+  assert.deepEqual(checked.slice().sort(), Array.from({ length: 12 }, (_, i) => String(i + 1)).sort());
+});
+
+test('analysis continues during a blocked notification; account change cancels queued notifications', async () => {
+  const sent = Promise.withResolvers();
+  const h = harness({ send: () => sent.promise });
+  try {
+    h.guard.handle({ type: 'message', message: message(1) });
+    await new Promise(resolve => setImmediate(resolve));
+    h.guard.handle({ type: 'message', message: message(2) });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(h.calls.filter(call => call.type === 'scam:check').map(call => call.messageId), ['1', '2']);
+    assert.deepEqual(h.sends.map(send => send.replyTo), ['1']);
+    h.guard.handle({ type: 'auth:state', state: 'idle' });
+  } finally {
+    sent.resolve({ type: 'sent', messageId: '101' });
+    await h.guard.whenIdle();
+  }
+  assert.deepEqual(h.sends.map(send => send.replyTo), ['1']);
+});

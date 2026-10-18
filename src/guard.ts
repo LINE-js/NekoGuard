@@ -3,7 +3,7 @@ import { EventEmitter } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
 import { buildAlerts } from "./alerts.js";
 import { ApiError } from "./client.js";
-import { isMessage, parseAdmins, parseAnalysis, record, type Api, type Frame, type Message } from "./protocol.js";
+import { isMessage, parseAdmins, parseAnalysis, record, type Api, type Frame, type Message, type ScamAnalysis } from "./protocol.js";
 
 interface Work {
   key: string;
@@ -22,6 +22,7 @@ interface GuardOptions {
 
 const MAX_QUEUE = 500;
 const MAX_RECENT = 5000;
+const MAX_IN_FLIGHT = 4;
 
 export class ScamGuard extends EventEmitter {
   private ready = false;
@@ -32,7 +33,8 @@ export class ScamGuard extends EventEmitter {
   private channels = new Set<string>();
   private recent = new Map<string, Work>();
   private queue = new Map<string, Work>();
-  private running?: Promise<void>;
+  private running = new Set<Promise<void>>();
+  private adminTail: Promise<unknown> = Promise.resolve();
   private controller = new AbortController();
   private nextCheck = 0;
   private nextSend = 0;
@@ -111,7 +113,7 @@ export class ScamGuard extends EventEmitter {
   }
 
   async whenIdle(): Promise<void> {
-    while (this.running) await this.running;
+    while (this.running.size) await Promise.all(this.running);
   }
 
   private reset(): void {
@@ -133,21 +135,11 @@ export class ScamGuard extends EventEmitter {
   }
 
   private start(): void {
-    if (this.running || !this.ready) return;
-    this.running = this.drain().finally(() => {
-      this.running = undefined;
-      if (this.queue.size && this.ready) this.start();
-    });
-  }
-
-  private async drain(): Promise<void> {
-    while (this.ready && this.queue.size) {
+    while (this.ready && this.queue.size && this.running.size < MAX_IN_FLIGHT) {
       const work = this.queue.values().next().value!;
       this.queue.delete(work.key);
-      try {
-        await this.inspect(work);
-      } catch (error) {
-        if (!this.current(work)) continue;
+      const task = this.inspect(work).catch(error => {
+        if (!this.current(work)) return;
         // Never expose untrusted response text or message contents through logs.
         const code = error instanceof ApiError ? error.code : "ANALYSIS_OR_NOTIFICATION_FAILED";
         this.emit("notice", code);
@@ -155,21 +147,40 @@ export class ScamGuard extends EventEmitter {
           this.stop();
           this.emit("fatal", code);
         }
-      }
+      }).finally(() => {
+        this.running.delete(task);
+        this.start();
+      });
+      this.running.add(task);
     }
+  }
+
+  private withAdmins<T>(action: () => Promise<T>): Promise<T> {
+    // A new lookup revokes mention grants. Hold this lane through every send
+    // batch, including discovery lookups, without blocking Jev requests.
+    const task = this.adminTail.then(action);
+    this.adminTail = task.catch(() => undefined);
+    return task;
   }
 
   private async inspect(work: Work): Promise<void> {
     if (!this.current(work)) return;
     const message = work.message;
     if (!this.ownMembers.has(message.channelId)) {
-      if (!await this.fetchAdmins(work)) return;
+      await this.withAdmins(async () => {
+        if (this.current(work) && !this.ownMembers.has(message.channelId)) await this.fetchAdmins(work);
+      });
     }
+    if (!this.current(work) || !this.ownMembers.has(message.channelId)) return;
     // OpenChat's p… identity differs from the account's u… identity, including phone-originated sends.
     if (message.senderId === this.userId || message.senderId === this.ownMembers.get(message.channelId)) return;
     const signal = this.controller.signal;
-    const checkWait = this.nextCheck - Date.now();
-    if (checkWait > 0) await delay(checkWait, undefined, { signal });
+    // Recheck after waking: other workers or a delayed event loop may have
+    // consumed the slot. Reserve only at actual dispatch, never in the future.
+    while (this.nextCheck > Date.now()) {
+      await delay(this.nextCheck - Date.now(), undefined, { signal });
+      if (!this.current(work)) return;
+    }
     if (!this.current(work)) return;
     this.nextCheck = Date.now() + (this.options.checkIntervalMs ?? 6100);
     const result = await this.api.request("scam:check", {
@@ -178,6 +189,13 @@ export class ScamGuard extends EventEmitter {
     if (!this.current(work)) return;
     const analysis = parseAnalysis(result, message);
     if (analysis.probability < this.options.thresholdPercent / 100) return;
+    await this.withAdmins(() => this.notify(work, analysis));
+  }
+
+  private async notify(work: Work, analysis: ScamAnalysis): Promise<void> {
+    if (!this.current(work)) return;
+    const message = work.message;
+    const signal = this.controller.signal;
     // Roles may change while Jev is answering; never reuse the discovery list for notification.
     const members = await this.fetchAdmins(work);
     if (!members) return;
