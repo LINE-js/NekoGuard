@@ -12,6 +12,11 @@ interface Work {
   generation: number;
 }
 
+interface Notification {
+  work: Work;
+  analysis: ScamAnalysis;
+}
+
 interface GuardOptions {
   thresholdPercent: number;
   /** Test clock seams; production observes LINE.js's shared 10 checks/minute and 20 sends/minute. */
@@ -34,8 +39,11 @@ export class ScamGuard extends EventEmitter {
   private recent = new Map<string, Work>();
   private queue = new Map<string, Work>();
   private running = new Set<Promise<void>>();
-  private adminTail: Promise<unknown> = Promise.resolve();
-  private controller = new AbortController();
+  private discovering = new Set<string>();
+  private notifications = new Map<string, Notification>();
+  private notifying = new Map<string, Promise<void>>();
+  private adminTails = new Map<string, Promise<unknown>>();
+  private waits = new Map<Work, AbortController>();
   private nextCheck = 0;
   private nextSend = 0;
   private nextAdmins = 0;
@@ -65,10 +73,25 @@ export class ScamGuard extends EventEmitter {
       return;
     }
     if (frame.type === "channels" && Array.isArray(frame.channels)) {
-      this.channels.clear();
+      const previous = this.channels;
+      this.channels = new Set<string>();
       for (const channel of frame.channels as unknown[]) {
         if (record(channel) && channel.kind === "square" && typeof channel.channelId === "string") {
           this.channels.add(channel.channelId);
+        }
+      }
+      let removed = false;
+      for (const chatId of previous) {
+        if (!this.channels.has(chatId)) {
+          this.ownMembers.delete(chatId);
+          removed = true;
+        }
+      }
+      if (removed) {
+        // Deleting the version makes removal permanent, even if the chat is re-added
+        // before an outstanding API response arrives. Keep tracking that request.
+        for (const [key, work] of this.recent) {
+          if (!this.channels.has(work.message.channelId)) this.invalidate(key);
         }
       }
       return;
@@ -77,9 +100,8 @@ export class ScamGuard extends EventEmitter {
       const key = `${frame.chatId}:${frame.messageId}`;
       const work = this.recent.get(key);
       if (work) {
-        // Invalidate an analysis already in flight as well as an item still waiting in the queue.
+        this.invalidate(key);
         this.recent.set(key, { ...work, signature: "unsent" });
-        this.queue.delete(key);
       }
       return;
     }
@@ -87,8 +109,7 @@ export class ScamGuard extends EventEmitter {
     const message = frame.message;
     const key = `${message.channelId}:${message.messageId}`;
     if (message.unsent || message.decryptFailed || message.contentType !== "NONE" || !message.text?.trim()) {
-      this.recent.delete(key);
-      this.queue.delete(key);
+      this.invalidate(key);
       return;
     }
     if (message.channelKind !== "square" || !this.channels.has(message.channelId)
@@ -96,7 +117,9 @@ export class ScamGuard extends EventEmitter {
     const signature = createHash("sha256").update(message.text).digest("hex");
     const previous = this.recent.get(key);
     if (previous?.signature === signature || previous?.signature === "unsent") return;
-    if (!this.queue.has(key) && this.queue.size >= MAX_QUEUE) {
+    // Even when the replacement cannot be queued, the old result is no longer valid.
+    this.invalidate(key);
+    if (this.queue.size >= MAX_QUEUE) {
       this.emit("notice", "ANALYSIS_QUEUE_FULL");
       return;
     }
@@ -105,9 +128,8 @@ export class ScamGuard extends EventEmitter {
       key, signature, generation: this.generation,
       message: { messageId: message.messageId, channelId: message.channelId, senderId: message.senderId },
     };
-    this.recent.delete(key);
     this.recent.set(key, work);
-    if (this.recent.size > MAX_RECENT) this.recent.delete(this.recent.keys().next().value!);
+    if (this.recent.size > MAX_RECENT) this.invalidate(this.recent.keys().next().value!);
     this.queue.set(key, work);
     this.start();
   }
@@ -117,7 +139,9 @@ export class ScamGuard extends EventEmitter {
   }
 
   async whenIdle(): Promise<void> {
-    while (this.running.size) await Promise.all(this.running);
+    while (this.running.size || this.notifying.size) {
+      await Promise.all([...this.running, ...this.notifying.values()]);
+    }
   }
 
   private reset(): void {
@@ -128,9 +152,28 @@ export class ScamGuard extends EventEmitter {
     this.ownMembers.clear();
     this.recent.clear();
     this.queue.clear();
-    this.controller.abort();
-    this.controller = new AbortController();
+    this.notifications.clear();
+    for (const controller of this.waits.values()) controller.abort();
+    this.waits.clear();
     // Keep pacing across account transitions: the upstream quota is server-wide.
+  }
+
+  private invalidate(key: string): void {
+    const work = this.recent.get(key);
+    if (work) this.waits.get(work)?.abort();
+    this.recent.delete(key);
+    this.queue.delete(key);
+    this.notifications.delete(key);
+  }
+
+  private async wait(work: Work, milliseconds: number): Promise<void> {
+    const controller = new AbortController();
+    this.waits.set(work, controller);
+    try {
+      await delay(milliseconds, undefined, { signal: controller.signal });
+    } finally {
+      this.waits.delete(work);
+    }
   }
 
   private current(work: Work): boolean {
@@ -139,19 +182,15 @@ export class ScamGuard extends EventEmitter {
   }
 
   private start(): void {
-    while (this.ready && this.queue.size && this.running.size < MAX_IN_FLIGHT) {
-      const work = this.queue.values().next().value!;
+    for (const work of this.queue.values()) {
+      if (!this.ready || this.running.size >= MAX_IN_FLIGHT) break;
+      const chatId = work.message.channelId;
+      // Only the discovery leader occupies a worker; its followers stay bounded by MAX_QUEUE.
+      if (!this.ownMembers.has(chatId)) {
+        if (this.discovering.has(chatId)) continue;
+      }
       this.queue.delete(work.key);
-      const task = this.inspect(work).catch(error => {
-        if (!this.current(work)) return;
-        // Never expose untrusted response text or message contents through logs.
-        const code = error instanceof ApiError ? error.code : "ANALYSIS_OR_NOTIFICATION_FAILED";
-        this.emit("notice", code);
-        if (code === "SCAM_CHECK_UNAVAILABLE" || code === "UNKNOWN_TYPE") {
-          this.stop();
-          this.emit("fatal", code);
-        }
-      }).finally(() => {
+      const task = this.inspect(work).catch(error => this.failed(work, error)).finally(() => {
         this.running.delete(task);
         this.start();
       });
@@ -159,11 +198,49 @@ export class ScamGuard extends EventEmitter {
     }
   }
 
-  private withAdmins<T>(action: () => Promise<T>): Promise<T> {
-    // A new lookup revokes mention grants. Hold this lane through every send
-    // batch, including discovery lookups, without blocking Jev requests.
-    const task = this.adminTail.then(action);
-    this.adminTail = task.catch(() => undefined);
+  private failed(work: Work, error: unknown): void {
+    if (!this.current(work)) return;
+    // Never expose untrusted response text or message contents through logs.
+    const code = error instanceof ApiError ? error.code : "ANALYSIS_OR_NOTIFICATION_FAILED";
+    this.emit("notice", code);
+    if (code === "SCAM_CHECK_UNAVAILABLE" || code === "UNKNOWN_TYPE") {
+      this.stop();
+      this.emit("fatal", code);
+    }
+  }
+
+  private startNotifications(): void {
+    for (const [key, { work, analysis }] of this.notifications) {
+      if (!this.ready || this.notifying.size >= MAX_IN_FLIGHT) break;
+      if (!this.current(work)) {
+        this.notifications.delete(key);
+        continue;
+      }
+      const chatId = work.message.channelId;
+      // Waiting jobs in a busy chat must not occupy other notification lanes.
+      if (this.notifying.has(chatId)) continue;
+      this.notifications.delete(key);
+      this.startNotification(work, analysis);
+    }
+  }
+
+  private startNotification(work: Work, analysis: ScamAnalysis): void {
+    const chatId = work.message.channelId;
+    const task = this.withAdmins(chatId, () => this.notify(work, analysis))
+      .catch(error => this.failed(work, error)).finally(() => {
+        this.notifying.delete(chatId);
+        this.startNotifications();
+      });
+    this.notifying.set(chatId, task);
+  }
+
+  private withAdmins<T>(chatId: string, action: () => Promise<T>): Promise<T> {
+    // A lookup revokes only this chat's mention grants. Hold its lane through all sends.
+    const task = (this.adminTails.get(chatId) ?? Promise.resolve()).then(action);
+    const tail = task.catch(() => undefined).finally(() => {
+      if (this.adminTails.get(chatId) === tail) this.adminTails.delete(chatId);
+    });
+    this.adminTails.set(chatId, tail);
     return task;
   }
 
@@ -171,18 +248,24 @@ export class ScamGuard extends EventEmitter {
     if (!this.current(work)) return;
     const message = work.message;
     if (!this.ownMembers.has(message.channelId)) {
-      await this.withAdmins(async () => {
-        if (this.current(work) && !this.ownMembers.has(message.channelId)) await this.fetchAdmins(work);
-      });
+      this.discovering.add(message.channelId);
+      try {
+        await this.withAdmins(message.channelId, async () => {
+          if (this.current(work) && !this.ownMembers.has(message.channelId)) await this.fetchAdmins(work);
+        });
+      } finally {
+        this.discovering.delete(message.channelId);
+        // Let the leader dispatch first, then admit followers using the resolved identity.
+        queueMicrotask(() => this.start());
+      }
     }
     if (!this.current(work) || !this.ownMembers.has(message.channelId)) return;
     // OpenChat's p… identity differs from the account's u… identity, including phone-originated sends.
     if (message.senderId === this.userId || message.senderId === this.ownMembers.get(message.channelId)) return;
-    const signal = this.controller.signal;
     // Recheck after waking: other workers or a delayed event loop may have
     // consumed the slot. Reserve only at actual dispatch, never in the future.
     while (this.nextCheck > Date.now()) {
-      await delay(this.nextCheck - Date.now(), undefined, { signal });
+      await this.wait(work, this.nextCheck - Date.now());
       if (!this.current(work)) return;
     }
     if (!this.current(work)) return;
@@ -193,13 +276,23 @@ export class ScamGuard extends EventEmitter {
     if (!this.current(work)) return;
     const analysis = parseAnalysis(result, message);
     if (analysis.probability < this.options.thresholdPercent / 100) return;
-    await this.withAdmins(() => this.notify(work, analysis));
+    // Give older runnable notifications priority, then use a free lane without
+    // charging a waiting-queue slot to a notification that can start immediately.
+    this.startNotifications();
+    if (this.notifying.size < MAX_IN_FLIGHT && !this.notifying.has(message.channelId)) {
+      this.startNotification(work, analysis);
+      return;
+    }
+    if (this.notifications.size >= MAX_QUEUE) {
+      this.emit("notice", "NOTIFICATION_QUEUE_FULL");
+      return;
+    }
+    this.notifications.set(work.key, { work, analysis });
   }
 
   private async notify(work: Work, analysis: ScamAnalysis): Promise<void> {
     if (!this.current(work)) return;
     const message = work.message;
-    const signal = this.controller.signal;
     // Roles may change while Jev is answering; never reuse the discovery list for notification.
     const members = await this.fetchAdmins(work);
     if (!members) return;
@@ -207,8 +300,10 @@ export class ScamGuard extends EventEmitter {
     const alerts = buildAlerts(message, analysis, members.admins);
     let sent = 0;
     for (const alert of alerts) {
-      const sendWait = this.nextSend - Date.now();
-      if (sendWait > 0) await delay(sendWait, undefined, { signal });
+      while (this.nextSend > Date.now()) {
+        await this.wait(work, this.nextSend - Date.now());
+        if (!this.current(work)) return;
+      }
       if (!this.current(work)) return;
       this.nextSend = Date.now() + (this.options.sendIntervalMs ?? 3100);
       await this.api.request("message:send", { chatId: message.channelId, ...alert }, "sent");
@@ -219,8 +314,10 @@ export class ScamGuard extends EventEmitter {
   }
 
   private async fetchAdmins(work: Work) {
-    const wait = this.nextAdmins - Date.now();
-    if (wait > 0) await delay(wait, undefined, { signal: this.controller.signal });
+    while (this.nextAdmins > Date.now()) {
+      await this.wait(work, this.nextAdmins - Date.now());
+      if (!this.current(work)) return;
+    }
     if (!this.current(work)) return;
     this.nextAdmins = Date.now() + (this.options.adminIntervalMs ?? 6100);
     const frame = await this.api.request("chat:admins:get", { chatId: work.message.channelId }, "chat:admins");
