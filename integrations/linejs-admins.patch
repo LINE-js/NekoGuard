@@ -37,10 +37,10 @@ index 59cf16e..6e1f4a0 100644
  
  LINE operation 與連線注意事項：linejs 未記載多數 operation 的參數排列，`SEND_CHAT_CHECKED`（手機已讀）只取 `param1` 且須為伺服器已知聊天室；群組／個人資料／聊天室成員變動不解析參數，只觸發節流的頻道清單重新整理（3 秒合併、最多每 30 秒一次），不得改成依參數猜測內容。頻道清單的最後一則訊息（`Channel.lastMessage`）是預覽，不登記媒體來源，不能藉此下載。WS 心跳：伺服器以協定層 Ping 每 30 秒檢查、兩輪無回應即關閉；網頁 `ping` 需 10 秒內收到 `pong`，回到前景立即探測。斷線記錄（網頁主控台、服務日誌 `WS_CLOSED`）只可含時間、close code、截短的 reason 與前後景狀態，不得含標頭、cookie 或 Token。
 diff --git a/PLAN.md b/PLAN.md
-index 49acd5b..f46823b 100644
+index 49acd5b..4a9b93c 100644
 --- a/PLAN.md
 +++ b/PLAN.md
-@@ -144,23 +144,62 @@
+@@ -144,23 +144,64 @@
  
  > 實作補完（協定版本仍為 2）：登出／換帳號以 session generation 作廢歷史、發送、回應、收回、已讀與頻道查詢的舊結果；歷史重新載入也同步清除已取消的回應。OpenChat 歷史採同聊天室 single-flight、時間＋訊息 id 錨點，快取最多 5 個聊天室各 5000 則、10 分鐘，合併即時訊息與狀態，過期時重新取得回應，僅已提供頁面的訊息授權媒體。網頁搜尋維持即時更新並跨聊天室依時間排序；初次歷史失敗可重試，回應更新不重建媒體 DOM，登出清除搜尋、私人畫面與通知。隔離測試與無頭靜音瀏覽器已驗證；尚未對本次變動重新進行真實 LINE Gate 驗收。
  
@@ -74,6 +74,8 @@ index 49acd5b..f46823b 100644
 +
 +> 成員候選有界選取：依原順序選滿每次既有上限的 100 位符合資格者後停止，不再展開／過濾整份名單再截斷；去重、已知資料略過、退避與並行數不變。兩種五千則歷史 fixture 經實際 Provider＋WebSocket，前兩頁完整回覆 hash 與查詢邊界保持不變；本機基準量測候選查詢流程，不宣稱 LINE 網路加速。271 項測試通過，未連接真實 LINE。
 +
++> 慢速已讀查詢共用：十秒快取期限只限制完成後的重用，未完成查詢仍共用；完成後不重設原有起算期限，SDK 逾時不變。實際 WebSocket 配合受控單調時間驗證重開歷史不發出重複查詢、首筆結果不被作廢、失敗立即可重試、舊登入成功／失敗不影響新登入的查詢。276 項測試通過，未連接真實 LINE。
++
  > v1.15（小語裁示：JEV 詐騙分析，協定版本仍為 2）：`config.yaml` 新增選用區段 `jev`（`token`：TypeSafe API 金鑰，有值才啟用；`model`：預設 `jev-1.13.0`）。新增 Server → Client `scam:state`（`{ enabled }`，連線即送、只給網頁，不含金鑰）與 `scam:result`（`{ requestId, chatId, messageId, analysis: { probability, tactic?: { kind, confidence } } }`，只送給要求的連線），Client → Server `scam:check`（`{ requestId, chatId, messageId }`，僅網頁、每連線每分鐘 10 次）。伺服器只接受已顯示、非本帳號、未收回、已解密、非系統訊息的文字訊息，以自己快取的文字經 `src/jev/` 呼叫 `POST https://api.typesafe.ai/v1/systemone`（Noul 題問是否為詐騙、Choice 題問最接近的手法；題目用英文，因官方說明英文準確度最佳），回應 fail-closed；未設定金鑰回 `SCAM_CHECK_UNAVAILABLE`，失敗回 `SCAM_CHECK_FAILED`。網頁對別人的文字訊息右鍵出現「詐騙機率分析」，以官方範例門檻分級（> 0.8 高度疑似、≤ 0.2 不太像、其間無法確定）並註明為模型估計、文字已送至 TypeSafe。尚未以有效金鑰實測真實分析結果。
  
  > v1.16（小語裁示：JEV 開放給機器人 API，協定版本仍為 2；MCP 入口裁示不做）：機器人連線新增 `scam:check`（`{ requestId, chatId, messageId }`），規則同網頁——只接受伺服器已顯示、非本帳號、未收回、已解密、非系統訊息的文字訊息，送伺服器快取的文字——另限 `api.chats` 內的聊天室（其餘 `UNKNOWN_CHAT`），所有機器人連線合計每分鐘 10 次（與網頁各連線的額度分開）；成功回 `scam:result`，未設定金鑰回 `SCAM_CHECK_UNAVAILABLE`。機器人不收 `scam:state`。不接受機器人傳任意文字。
@@ -104,7 +106,7 @@ index 49acd5b..f46823b 100644
  | `channels` | `{ channels: Channel[] }`（snapshot，連線即送、變動重送） |
  | `messages` | `{ chatId, messages: Message[] }`（連線時快照，每個聊天室一個影格；舊訊息，不計未讀） |
  | `message` | `{ message: Message }`（即時新訊息） |
-@@ -190,6 +229,7 @@
+@@ -190,6 +231,7 @@
  | `message:react` | `{ requestId, chatId, messageId, reaction: "NICE"｜"LOVE"｜"FUN"｜"AMAZING"｜"SAD"｜"OMG"｜null }`（僅網頁，與 `message:send` 共用頻率上限） |
  | `scam:check` | `{ requestId, chatId, messageId }`（網頁每連線每分鐘 10 次；機器人限 `api.chats`、所有機器人合計每分鐘 10 次；只接受別人傳來、已顯示、未收回的文字訊息） |
  | `profile:get` | `{ requestId }`（自己的 `profile`；網頁與機器人皆可，不呼叫 LINE） |
@@ -112,7 +114,7 @@ index 49acd5b..f46823b 100644
  | `channels:refresh` | `{}` |
  | `api:token:create` / `api:token:revoke` | `{}`（產生或撤銷機器人 Token，並中斷所有機器人連線） |
  | `ping` | `{}` |
-@@ -197,7 +237,7 @@
+@@ -197,7 +239,7 @@
  ### 機器人 API（`/api/ws`）
  - 升級條件：`api.enabled`、**無 `Origin`**、`Authorization: Bearer linejs_…` 符合目前 Token；否則 403（同時超過 4 個連線回 429）。`Host` 不限制（同網頁）。
  - 連線時收到 `hello`、`auth:state`、`status`、`auth:ready`、僅含 `api.chats` 的 `channels`；之後只有這些聊天室的 `message`／`message:edit`。不重播、不給 `read`／`update:available`／`api:state`。
@@ -122,7 +124,7 @@ index 49acd5b..f46823b 100644
  
  ### HTTP
 diff --git a/README.en.md b/README.en.md
-index 6b97c31..9608392 100644
+index 6b97c31..a1755ad 100644
 --- a/README.en.md
 +++ b/README.en.md
 @@ -26,7 +26,25 @@ flowchart LR
@@ -144,7 +146,7 @@ index 6b97c31..9608392 100644
 +
 +Sticker metadata and owned-product ID ranges stop scanning once the existing 200-entry output limit per package is reached. ID order, duplicate entries and subsequent packages are preserved.
 +
-+Read snapshots requested when the web page opens history retain their ten-second sharing window, measured by monotonic elapsed time rather than wall-clock time. Live read positions still merge during that window, and logout discards the old account's snapshots.
++Read snapshots requested when the web page opens history retain their ten-second sharing window, measured by monotonic elapsed time rather than wall-clock time. Live read positions still merge during that window, and logout discards the old account's snapshots. In-flight lookups remain shared past that window; completion does not restart it, and failures allow the next open to retry.
 +
 +Pending uploads remain usable for ten minutes of monotonic elapsed time, unaffected by wall-clock corrections. Expired items are still pruned on insertion or lookup, successful sends consume them, logout clears them, and existing capacity limits are unchanged.
 +
@@ -182,7 +184,7 @@ index 6b97c31..9608392 100644
  
  ```js
 diff --git a/README.ja.md b/README.ja.md
-index a6e80b5..1a4cb83 100644
+index a6e80b5..1b508cc 100644
 --- a/README.ja.md
 +++ b/README.ja.md
 @@ -26,7 +26,25 @@ flowchart LR
@@ -204,7 +206,7 @@ index a6e80b5..1a4cb83 100644
 +
 +スタンプのメタデータと所有商品の ID 範囲は、パッケージごとの既存の出力上限 200 件に達すると残りの走査を停止します。ID の順序、重複項目、後続のパッケージは維持します。
 +
-+Web ページで履歴を開いた際の既読スナップショットは、単調時計による経過時間で 10 秒間共有し、システム時刻の補正には影響されません。その間もリアルタイムの既読位置を統合し、ログアウト後は旧アカウントのスナップショットを引き継ぎません。
++Web ページで履歴を開いた際の既読スナップショットは、単調時計による経過時間で 10 秒間共有し、システム時刻の補正には影響されません。その間もリアルタイムの既読位置を統合し、ログアウト後は旧アカウントのスナップショットを引き継ぎません。処理中の照会はこの期間を超えても共有し、完了時に期限を延長しません。失敗した照会は次回表示時に再試行できます。
 +
 +アップロードの一時保存は単調時計で 10 分間利用でき、システム時刻の補正で早期失効したり有効期間が延びたりしません。期限切れは追加・参照時に削除し、送信成功時に消費、ログアウト時に消去する既存の動作と容量制限を維持します。
 +
@@ -242,7 +244,7 @@ index a6e80b5..1a4cb83 100644
  
  ```js
 diff --git a/README.md b/README.md
-index 7704eb9..0ee39af 100644
+index 7704eb9..814896f 100644
 --- a/README.md
 +++ b/README.md
 @@ -26,7 +26,25 @@ flowchart LR
@@ -264,7 +266,7 @@ index 7704eb9..0ee39af 100644
 +
 +貼圖 metadata 與商品 ID 區間收滿每包既有的 200 筆輸出後即停止掃描其餘項目；不改變 ID 順序、重複項目或後續貼圖包。
 +
-+網頁開啟歷史時的已讀快照維持十秒短期共用，以單調經過時間判斷，不受系統校時影響；期間仍合併即時已讀位置，登出後不沿用舊帳號快照。
++網頁開啟歷史時的已讀快照維持十秒短期共用，以單調經過時間判斷，不受系統校時影響；期間仍合併即時已讀位置，登出後不沿用舊帳號快照。未完成的查詢不因十秒期限而重發；完成後仍沿用發起時的期限，失敗可於下次開啟立即重試。
 +
 +上傳暫存的十分鐘有效期以單調時間計算，避免校時造成提前失效或延長使用；到期項目仍在新增／讀取時清理，成功發送後移除、登出清空，既有容量限制不變。
 +
@@ -864,7 +866,7 @@ index 9307238..a67a356 100644
  export interface Mention {
    userId: string;
 diff --git a/src/ws/hub.ts b/src/ws/hub.ts
-index 4ae6a53..fa285bf 100644
+index 4ae6a53..78db4aa 100644
 --- a/src/ws/hub.ts
 +++ b/src/ws/hub.ts
 @@ -12,7 +12,7 @@ import type { Channel, ChannelKind, Message, Reactions, ReadPosition } from "../
@@ -893,11 +895,13 @@ index 4ae6a53..fa285bf 100644
    let status: ListenState = "starting";
    let refreshing: Promise<void> | undefined;
    // State can become ready again before an old LINE request settles; "ready" alone is not an account boundary.
-@@ -111,8 +114,12 @@ export function createHub(options: HubOptions): Hub {
+@@ -110,9 +113,13 @@ export function createHub(options: HubOptions): Hub {
+   // snapshot for 1:1 chats, so without this a page reload would forget who already read.
    const seenReads = new Map<string, Map<string, bigint>>();
    // The latest LINE read-range lookup per chat (see sendReadSnapshot).
-   const readFetches = new Map<string, { at: number; done: Promise<void> }>();
+-  const readFetches = new Map<string, { at: number; done: Promise<void> }>();
 -  // OpenChat chat → the member id this account speaks under there, learned from its own sends.
++  const readFetches = new Map<string, { at: number; pending: boolean; done: Promise<void> }>();
 +  // OpenChat chat → own member identity, learned from fresh membership metadata or own sends.
    const ownSquareSenders = new Map<string, string>();
 +  // Share only in-flight own-identity discovery; explicit administrator lookups remain fresh.
@@ -975,25 +979,39 @@ index 4ae6a53..fa285bf 100644
    }
  
    function apiState(): ServerFrame {
-@@ -266,7 +281,7 @@ export function createHub(options: HubOptions): Hub {
-     // Opening a chat in several tabs, or reopening it, shares one LINE lookup for a short while:
-     // live read events keep `seenReads` current in between.
+@@ -263,21 +278,26 @@ export function createHub(options: HubOptions): Hub {
+ 
+   async function sendReadSnapshot(socket: WebSocket, chatId: string, kind: ChannelKind): Promise<void> {
+     const account = generation;
+-    // Opening a chat in several tabs, or reopening it, shares one LINE lookup for a short while:
+-    // live read events keep `seenReads` current in between.
++    // Share unfinished lookups, then reuse snapshots within the original start-based window.
++    // Live read events keep `seenReads` current in between.
      const recent = readFetches.get(chatId);
 -    let fetching = recent && Date.now() - recent.at < READ_RANGE_FRESH_MS ? recent.done : undefined;
-+    let fetching = recent && performance.now() - recent.at < READ_RANGE_FRESH_MS ? recent.done : undefined;
++    let fetching = recent && (recent.pending || performance.now() - recent.at < READ_RANGE_FRESH_MS) ? recent.done : undefined;
      if (!fetching) {
        fetching = provider.fetchReadPositions({ channelId: chatId, kind }).then(
          // A logout while LINE was answering clears readFetches: the old account's receipts are dropped.
-@@ -277,7 +292,7 @@ export function createHub(options: HubOptions): Hub {
+-        (positions) => { if (readFetches.get(chatId)?.done === fetching) for (const position of positions) rememberRead(chatId, position); },
++        (positions) => {
++          const current = readFetches.get(chatId);
++          if (!current || current.done !== fetching) return;
++          current.pending = false;
++          for (const position of positions) rememberRead(chatId, position);
++        },
+         (error: unknown) => {
+           // A failure is not remembered: the next open asks LINE again.
+           if (readFetches.get(chatId)?.done === fetching) readFetches.delete(chatId);
            logFailure("READ_RANGE_FAILED", error);
          },
        );
 -      readFetches.set(chatId, { at: Date.now(), done: fetching });
-+      readFetches.set(chatId, { at: performance.now(), done: fetching });
++      readFetches.set(chatId, { at: performance.now(), pending: true, done: fetching });
      }
      await fetching;
      if (account !== generation) return;
-@@ -296,10 +311,11 @@ export function createHub(options: HubOptions): Hub {
+@@ -296,10 +316,11 @@ export function createHub(options: HubOptions): Hub {
      if (scope && request.kind !== "text") return fail(socket, "INVALID_REQUEST", request.requestId);
      const target = { channelId: request.chatId, kind: channel.kind };
      if (request.kind === "text") {
@@ -1007,7 +1025,7 @@ index 4ae6a53..fa285bf 100644
            return fail(socket, "INVALID_REQUEST", request.requestId);
          }
        }
-@@ -377,6 +393,11 @@ export function createHub(options: HubOptions): Hub {
+@@ -377,6 +398,11 @@ export function createHub(options: HubOptions): Hub {
      }
    }
  
@@ -1019,7 +1037,7 @@ index 4ae6a53..fa285bf 100644
    /**
     * The text sent to TypeSafe is the server's own copy of a message it has shown, from someone else:
     * a client cannot use this to send arbitrary text out, or to rate its own messages. Bots are also
-@@ -387,12 +408,32 @@ export function createHub(options: HubOptions): Hub {
+@@ -387,12 +413,32 @@ export function createHub(options: HubOptions): Hub {
      if (!parsed.ok) return fail(socket, "INVALID_REQUEST", parsed.requestId);
      const { requestId, chatId, messageId } = parsed.value;
      if (!scam) return fail(socket, "SCAM_CHECK_UNAVAILABLE", requestId);
@@ -1056,7 +1074,7 @@ index 4ae6a53..fa285bf 100644
        const analysis = await scam.analyzeScam(message.text);
        if (account !== generation || login.state !== "ready") return;
        send(socket, { type: "scam:result", requestId, chatId, messageId, analysis });
-@@ -428,8 +469,8 @@ export function createHub(options: HubOptions): Hub {
+@@ -428,8 +474,8 @@ export function createHub(options: HubOptions): Hub {
      const placeholder = store.unsend(messageId, chatHint);
      if (!placeholder) return;
      const frame: ServerFrame = { type: "message:unsend", chatId: placeholder.channelId, messageId };
@@ -1067,7 +1085,7 @@ index 4ae6a53..fa285bf 100644
      broadcastChannel(placeholder.channelId, placeholder.channelId === chatHint ? before : undefined);
    }
  
-@@ -443,8 +484,9 @@ export function createHub(options: HubOptions): Hub {
+@@ -443,8 +489,9 @@ export function createHub(options: HubOptions): Hub {
        clearTimeout(refreshTimer);
        refreshTimer = setTimeout(() => { void refreshChannels(); }, NEW_CHANNEL_REFRESH_MS);
      }
@@ -1079,7 +1097,7 @@ index 4ae6a53..fa285bf 100644
      // The list entry follows: activity order and preview move with the newest message.
      if (before) broadcastChannel(message.channelId, before);
    }
-@@ -490,6 +532,33 @@ export function createHub(options: HubOptions): Hub {
+@@ -490,6 +537,33 @@ export function createHub(options: HubOptions): Hub {
      }
    }
  
@@ -1113,7 +1131,7 @@ index 4ae6a53..fa285bf 100644
    /** Local only (no LINE request): the profile LINE gave at sign-in. */
    function handleProfile(socket: WebSocket, frame: Record<string, unknown>): void {
      const requestId = requestIdOf(frame);
-@@ -544,6 +613,8 @@ export function createHub(options: HubOptions): Hub {
+@@ -544,6 +618,8 @@ export function createHub(options: HubOptions): Hub {
        seenReads.clear();
        readFetches.clear();
        ownSquareSenders.clear();
@@ -1122,7 +1140,7 @@ index 4ae6a53..fa285bf 100644
        status = "starting";
      }
      broadcastAll({ type: "auth:state", state });
-@@ -579,7 +650,7 @@ export function createHub(options: HubOptions): Hub {
+@@ -579,7 +655,7 @@ export function createHub(options: HubOptions): Hub {
      watch(socket, "bot");
      const sendLimiter = new SlidingWindowLimiter(config.limits.sendsPerSecond, 1000);
      const historyLimiter = new SlidingWindowLimiter(HISTORY_PER_SECOND, 1000);
@@ -1131,7 +1149,7 @@ index 4ae6a53..fa285bf 100644
      send(socket, { type: "auth:state", state: login.state });
      send(socket, { type: "status", state: status });
      if (login.state === "ready") {
-@@ -607,6 +678,10 @@ export function createHub(options: HubOptions): Hub {
+@@ -607,6 +683,10 @@ export function createHub(options: HubOptions): Hub {
            if (!botScamLimiter.allow()) fail(socket, "RATE_LIMITED", requestIdOf(frame as Record<string, unknown>));
            else void handleScamCheck(socket, frame as Record<string, unknown>, botScope);
            return;
@@ -1195,7 +1213,7 @@ index 31fd7a2..9518ee1 100644
    const base = header(frame);
    if (!base) return { ok: false, ...(requestIdOf(frame) ? { requestId: requestIdOf(frame)! } : {}) };
 diff --git a/test/hub.test.mjs b/test/hub.test.mjs
-index e3ebc41..ae4abbe 100644
+index e3ebc41..14d6290 100644
 --- a/test/hub.test.mjs
 +++ b/test/hub.test.mjs
 @@ -5,6 +5,7 @@ import { createServer } from "node:net";
@@ -1206,7 +1224,115 @@ index e3ebc41..ae4abbe 100644
  import { createWebServer } from "../dist/http/server.js";
  import { createHub } from "../dist/ws/hub.js";
  import { ApiTokenStore } from "../dist/http/apiToken.js";
-@@ -920,6 +921,38 @@ test("read positions seen live are replayed on the next open, merged with LINE's
+@@ -651,6 +652,107 @@ test("opening the same chat again right away shares one LINE read-range lookup",
+   assert.equal(env.provider.calls.filter(([kind]) => kind === "read-range").length, 1);
+ });
+ 
++test("slow read snapshots stay shared past the freshness window without extending it after completion", async (t) => {
++  let elapsed = 1000;
++  t.mock.method(performance, "now", () => elapsed);
++  const env = await signedIn(t);
++  const gate = Promise.withResolvers();
++  let lookups = 0;
++  env.provider.fetchReadPositions = () => ++lookups === 1 ? gate.promise : Promise.resolve([{ readerId: "remote", messageId: "200" }]);
++  const live = { readerId: "live", messageId: "900" };
++  env.hub.handleRead(CHAT, live);
++  await env.client.until((frame) => frame.type === "read");
++  const reads = () => env.client.frames.filter((frame) => frame.type === "read");
++  try {
++    for (let index = 0; index < 3; index++) {
++      elapsed = 1000 + index * 10_000;
++      const requestId = `slow-read-${index}`;
++      env.request({ type: "history:fetch", requestId, chatId: CHAT });
++      await env.client.until((frame) => frame.type === "history" && frame.requestId === requestId);
++    }
++    assert.equal(lookups, 1);
++    elapsed = 25_000;
++    gate.resolve([{ readerId: "remote", messageId: "100" }]);
++    await env.client.until(() => reads().length === 4);
++    for (const frame of reads().slice(1)) assert.deepEqual(frame.positions, [live, { readerId: "remote", messageId: "100" }]);
++    env.request({ type: "history:fetch", requestId: "completed-read", chatId: CHAT });
++    await env.client.until(() => reads().length === 5);
++    assert.equal(lookups, 2);
++    assert.deepEqual(reads().at(-1).positions, [live, { readerId: "remote", messageId: "200" }]);
++  } finally {
++    gate.resolve([]);
++  }
++});
++
++test("a failed shared read lookup preserves live positions and allows an immediate retry", async (t) => {
++  t.mock.method(performance, "now", () => 1000);
++  const env = await signedIn(t);
++  const gate = Promise.withResolvers();
++  let lookups = 0;
++  env.provider.fetchReadPositions = () => ++lookups === 1 ? gate.promise : Promise.resolve([{ readerId: "remote", messageId: "100" }]);
++  const live = { readerId: "live", messageId: "900" };
++  env.hub.handleRead(CHAT, live);
++  await env.client.until((frame) => frame.type === "read");
++  const reads = () => env.client.frames.filter((frame) => frame.type === "read");
++  try {
++    for (const requestId of ["failed-read-1", "failed-read-2"]) {
++      env.request({ type: "history:fetch", requestId, chatId: CHAT });
++      await env.client.until((frame) => frame.type === "history" && frame.requestId === requestId);
++    }
++    assert.equal(lookups, 1);
++    gate.reject(new Error("unavailable"));
++    await env.client.until(() => reads().length === 3);
++    for (const frame of reads()) assert.deepEqual(frame.positions, [live]);
++    env.request({ type: "history:fetch", requestId: "retry-read", chatId: CHAT });
++    await env.client.until(() => reads().length === 4);
++    assert.equal(lookups, 2);
++    assert.deepEqual(reads().at(-1).positions, [live, { readerId: "remote", messageId: "100" }]);
++    assert.equal(env.client.frames.some((frame) => frame.type === "error"), false);
++  } finally {
++    gate.resolve([]);
++  }
++});
++
++test("old read lookup outcomes cannot release or remove the next account's pending lookup", async (t) => {
++  for (const fails of [false, true]) {
++    await t.test(fails ? "old lookup fails" : "old lookup succeeds", async (t) => {
++      let elapsed = 1000;
++      t.mock.method(performance, "now", () => elapsed);
++      const env = await signedIn(t);
++      const old = Promise.withResolvers(), current = Promise.withResolvers();
++      let lookups = 0;
++      env.provider.fetchReadPositions = () => ++lookups === 1 ? old.promise : current.promise;
++      const request = async (requestId) => {
++        env.request({ type: "history:fetch", requestId, chatId: CHAT });
++        await env.client.until((frame) => frame.type === "history" && frame.requestId === requestId);
++      };
++      try {
++        await request("old-read");
++        await env.login.logout();
++        env.provider.channels = [{ channelId: CHAT, kind: "group", name: "下個帳號" }];
++        await env.login.restore();
++        await env.client.until((frame) => frame.type === "channels" && frame.channels.some((channel) => channel.name === "下個帳號"));
++        elapsed = 2000;
++        await request("new-read");
++        const at = env.client.frames.length;
++        if (fails) old.reject(new Error("old lookup unavailable"));
++        else old.resolve([{ readerId: "old", messageId: "700" }]);
++        await settle();
++        elapsed = 12_000;
++        await request("new-read-again");
++        assert.equal(lookups, 2);
++        current.resolve([{ readerId: "new", messageId: "800" }]);
++        const reads = () => env.client.frames.slice(at).filter((frame) => frame.type === "read");
++        await env.client.until(() => reads().length === 2);
++        for (const frame of reads()) assert.deepEqual(frame.positions, [{ readerId: "new", messageId: "800" }]);
++      } finally {
++        old.resolve([]);
++        current.resolve([]);
++      }
++    });
++  }
++});
++
+ test("live read events reach the browser only for chats the account has", async (t) => {
+   const env = await signedIn(t);
+   env.hub.handleRead(`c${"b".repeat(32)}`, { readerId: "u1", messageId: "5" });
+@@ -920,6 +1022,38 @@ test("read positions seen live are replayed on the next open, merged with LINE's
    await env.client.until(() => env.client.frames.filter((frame) => frame.type === "read" && frame.positions.length === 3).length === 2);
  });
  
@@ -1245,7 +1371,7 @@ index e3ebc41..ae4abbe 100644
  test("an open chat is reported read once per position, only for messages the server has shown", async (t) => {
    const env = await signedIn(t);
    env.provider.history = { messages: [older("1001", 10), older("1002", 20), older("1003", 30)], hasMore: false };
-@@ -1571,3 +1604,376 @@ test("a connection that stops answering pings is closed by the next heartbeat; o
+@@ -1571,3 +1705,376 @@ test("a connection that stops answering pings is closed by the next heartbeat; o
    assert.equal(healthy.socket.readyState, WebSocket.OPEN);
    assert.equal(pings, 2);
  });
