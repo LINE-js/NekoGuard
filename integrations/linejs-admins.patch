@@ -18,7 +18,7 @@ index 59cf16e..8794096 100644
  內部日誌也不得包含憑證、token、QR URL、PIN 或 key material；不得直接 dump 套件錯誤物件、session 或登入 payload。圖片／貼圖／影片／語音位元組一律走 HTTP，WS 不傳位元組；收到的檔案只以 `file-<id>` 附件下載（`Content-Disposition: attachment`、`application/octet-stream`，不嗅探、不內嵌），規則同收到的媒體。訊息不落盤；每頻道最多 500 則，同 messageId 去重，編輯覆寫快取。LINE listen 失效採退避重啟；QR 失敗不自動循環，須由使用者動作重新產生。
  
 diff --git a/PLAN.md b/PLAN.md
-index 49acd5b..573178a 100644
+index 49acd5b..7d2e4be 100644
 --- a/PLAN.md
 +++ b/PLAN.md
 @@ -150,17 +150,24 @@
@@ -29,7 +29,7 @@ index 49acd5b..573178a 100644
 +> 管理員通知授權：同一機器人連線可標記同聊天室最後發起且成功完成的 `chat:admins:get` 回傳的管理員，即使未曾發言。新查詢開始先撤銷舊名單及尚未完成的舊查詢授權資格；舊成功結果回 `CHAT_ADMINS_FAILED`，不能在新查詢等待中、成功或失敗後恢復授權。登出／換帳號清除全部授權，其他目標仍沿用發言者驗證。外掛應在通知前重新取得角色。
 +> 分析請求順序：先以本地快取與已知身分拒絕不可分析訊息，再為其餘 OpenChat 訊息解析未知成員身分；等待後重新讀取並驗證訊息，保留編輯／收回及自身訊息排除。無效要求仍計入原有分析請求限額，不另增重試。
 +> 並行分析僅在同一登入工作階段、同一聊天室共用進行中的自己身分解析；完成／失敗釋放、登出清空並丟棄舊結果，不自動重試。每則分析仍分別計費與限流，不授予標記權；明確 `chat:admins:get` 不共用此查詢，維持每次重新查證。
-+> 即時事件編碼：僅對 `api.chats` 內的新訊息、編輯與收回，跨網頁／機器人共用一次 JSON 編碼並直接遍歷兩組連線；範圍外仍只送網頁，不改變資料可見性、事件內容或背壓限制。
++> 即時事件編碼：僅對 `api.chats` 內的新訊息、編輯與收回，跨網頁／機器人共用一次 JSON 編碼並直接遍歷兩組連線；範圍外仍只送網頁，不改變資料可見性、事件內容或背壓限制。回應與廣播均先排除已關閉或超過背壓上限的連線，沒有可傳送接收端便不編碼；超限連線仍立即終止。
 +
  ### Server → Client
  
@@ -65,7 +65,7 @@ index 49acd5b..573178a 100644
  
  ### HTTP
 diff --git a/README.en.md b/README.en.md
-index 6b97c31..e843a07 100644
+index 6b97c31..6d4683a 100644
 --- a/README.en.md
 +++ b/README.en.md
 @@ -164,18 +164,24 @@ Lets your own programs (bots) send and receive messages. **Disabled by default**
@@ -91,12 +91,12 @@ index 6b97c31..e843a07 100644
 +- `scam:check` first rejects missing, non-text, unsent, undecryptable, system and known own messages from the local cache, without querying LINE membership for them. For other OpenChat messages, it resolves complete membership if own identity is unknown; failure never calls paid analysis. After waiting, it rereads and validates the current message, still rejecting own phone and bot messages. Actual mentions still use `message:send.mentions` (up to 20, UTF-16 offsets) and `replyTo`.
 +- Concurrent analyses in the same login session and OpenChat share only an in-flight own-identity lookup. The slot is released on success or failure without automatic retries; logout invalidates shared state and stale results. Each message still consumes its own analysis quota and is analyzed separately. This shares no administrator grants: explicit `chat:admins:get` requests always perform a fresh lookup.
 +- Admins returned in `chat:admins` may be mentioned even if they have never spoken, but only by the **same bot connection**, in the same chat, after its latest-started lookup succeeds. Starting another lookup immediately revokes the old list and supersedes any lookup still in flight; a superseded success returns `CHAT_ADMINS_FAILED` and cannot restore grants while the newer lookup is pending or after it succeeds or fails. Logout/account changes clear all grants. Arbitrary IDs remain forbidden. Query again before notifying to avoid stale roles.
-+- New-message, edit and unsend events within `api.chats` share one JSON encoding across pages and bots, iterating both connection sets without allocating a combined array. Events outside that scope remain page-only; page-only data and secrets are not exposed to bots. Existing backpressure and connection-state checks remain unchanged.
++- New-message, edit and unsend events within `api.chats` share one JSON encoding across pages and bots, iterating both connection sets without allocating a combined array. Events outside that scope remain page-only; page-only data and secrets are not exposed to bots. Responses and broadcasts check connection state and backpressure before encoding for an eligible recipient; no JSON is produced when no recipient can receive it. Existing backpressure limits and disconnection behavior remain unchanged.
  - Bots speak through **your personal account**. Frequent or mechanical sending may trigger LINE's risk controls. Set conservative limits and use a secondary account first.
  
  ```js
 diff --git a/README.ja.md b/README.ja.md
-index a6e80b5..be90dc1 100644
+index a6e80b5..0b00e3f 100644
 --- a/README.ja.md
 +++ b/README.ja.md
 @@ -164,18 +164,24 @@ HTTP：`GET /media/:mediaId`（スタンプ、スタンプパックのアイコ
@@ -122,12 +122,12 @@ index a6e80b5..be90dc1 100644
 +- `scam:check` はまずローカルキャッシュで、存在しない・非テキスト・送信取消済み・復号失敗・システム・既知の自分のメッセージを拒否し、それらのために LINE のメンバー情報を取得しません。それ以外の OpenChat メッセージで自分の ID が不明なら完全なメンバー情報を取得し、失敗時は有料分析を呼びません。待機後は最新のメッセージを読み直して検証し、スマートフォンやボット自身のメッセージも引き続き拒否します。実際のメンションは `message:send.mentions`（最大 20 人、UTF-16 位置）と `replyTo` を使います。
 +- 同じログインセッション・OpenChat の並行分析は、処理中の自分の ID 取得だけを共有します。成功・失敗後に共有枠を解放し、自動再試行はしません。ログアウトで共有状態と古い結果を無効化します。各メッセージは個別に分析制限を消費し、個別に分析します。管理者へのメンション権限は共有せず、明示的な `chat:admins:get` は毎回新しく取得します。
 +- `chat:admins` が返した管理者は未発言でもメンションできますが、**同じボット接続・同じチャット**で最後に開始した取得が成功した場合に限ります。再取得の開始時に古い許可と処理中の以前の取得の権限を直ちに破棄します。以前の取得が後から成功しても `CHAT_ADMINS_FAILED` を返し、新しい取得の待機中・成功後・失敗後のいずれも古い許可を復活させません。ログアウト・アカウント変更で全許可を消去します。任意の ID は許可されません。通知前に再取得してください。
-+- `api.chats` 内の新着・編集・送信取消イベントは、Web ページとボットで JSON エンコードを一度だけ共有し、接続配列を結合せず両方の集合を走査します。範囲外のイベントは引き続き Web ページのみに送信し、Web ページ専用データや機密をボットへ公開しません。既存のバックプレッシャーと接続状態の確認は変更しません。
++- `api.chats` 内の新着・編集・送信取消イベントは、Web ページとボットで JSON エンコードを一度だけ共有し、接続配列を結合せず両方の集合を走査します。範囲外のイベントは引き続き Web ページのみに送信し、Web ページ専用データや機密をボットへ公開しません。応答とブロードキャストは接続状態とバックプレッシャーを先に確認し、送信可能な接続がある場合のみエンコードします。送信先がなければ JSON を生成せず、既存の上限と切断処理は変更しません。
  - ボットは**あなたの個人アカウント**として発言します。頻繁な送信や機械的な送信は LINE の不正利用対策に検知される可能性があります。上限は控えめに設定し、まずサブアカウントを使ってください。
  
  ```js
 diff --git a/README.md b/README.md
-index 7704eb9..4717e94 100644
+index 7704eb9..9b3f0e6 100644
 --- a/README.md
 +++ b/README.md
 @@ -164,18 +164,24 @@ HTTP：`GET /media/:mediaId`（貼圖、貼圖包圖示、大頭照與原圖、
@@ -153,7 +153,7 @@ index 7704eb9..4717e94 100644
 +- `scam:check` 先以本地快取拒絕不存在、非文字、已收回、解密失敗、系統及已知本帳號訊息，不為這些要求查詢 LINE 成員。其餘 OpenChat 訊息若尚無自己的成員身分，先取得完整成員資料，失敗不呼叫付費分析；等待後重新讀取並檢查目前訊息，自己的手機與機器人訊息仍一律拒絕。發送真正標記仍使用 `message:send.mentions`（最多 20 個、UTF-16 位置）與 `replyTo`。
 +- 同一登入工作階段、同一 OpenChat 的並行分析共用尚未完成的自己身分查詢，完成或失敗後釋放，不自動重試；登出會作廢共用狀態及舊結果。每則訊息仍分別計入分析限額並執行分析。這不共用管理員授權，明確的 `chat:admins:get` 仍每次重新查詢。
 +- `chat:admins` 回傳的管理員即使尚未發言，也能由**同一條機器人連線**以 `message:send.mentions` 標記；授權限同一聊天室、最後發起且成功完成的查詢。再次查詢會立即撤銷舊名單與尚未完成的舊查詢授權資格；舊查詢即使較晚成功也只回 `CHAT_ADMINS_FAILED`，不能在新查詢等待中、成功或失敗後恢復舊授權。登出／換帳號清除全部授權。不是任意 ID 白名單；通知前應重新查詢，避免使用過時角色。
-+- `api.chats` 內的新訊息、編輯與收回事件，由網頁與機器人共用一次 JSON 編碼，直接遍歷兩組連線，不建立合併連線陣列。範圍外事件仍只送網頁；網頁專用資料與機密不因此開放給機器人，原有背壓與連線狀態檢查不變。
++- `api.chats` 內的新訊息、編輯與收回事件，由網頁與機器人共用一次 JSON 編碼，直接遍歷兩組連線，不建立合併連線陣列。範圍外事件仍只送網頁；網頁專用資料與機密不因此開放給機器人。回應與廣播都先檢查連線狀態及背壓，再為可傳送的連線編碼；沒有可傳送接收端時不產生 JSON，既有背壓上限與斷線處理不變。
  - 機器人以**你的真人帳號**發言，頻繁或機械式的發送可能觸發 LINE 風控。請保守設定上限，並先用次要帳號。
  
  ```js
@@ -293,7 +293,7 @@ index 9307238..a67a356 100644
  export interface Mention {
    userId: string;
 diff --git a/src/ws/hub.ts b/src/ws/hub.ts
-index 4ae6a53..fbb68a2 100644
+index 4ae6a53..c70a022 100644
 --- a/src/ws/hub.ts
 +++ b/src/ws/hub.ts
 @@ -12,7 +12,7 @@ import type { Channel, ChannelKind, Message, Reactions, ReadPosition } from "../
@@ -336,15 +336,41 @@ index 4ae6a53..fbb68a2 100644
    // Sockets that answered the last ping (browsers and the ws client both reply to pings on their own).
    const alive = new WeakSet<WebSocket>();
    const timedOut = new WeakSet<WebSocket>();
-@@ -157,18 +164,19 @@ export function createHub(options: HubOptions): Hub {
-     socket.send(data);
+@@ -144,31 +151,38 @@ export function createHub(options: HubOptions): Hub {
+   }
+ 
+   function send(socket: WebSocket, frame: ServerFrame): void {
+-    sendData(socket, JSON.stringify(frame));
++    if (canSend(socket)) socket.send(JSON.stringify(frame));
+   }
+ 
+-  /** Sends an already serialized frame: a broadcast is turned into JSON once, not once per connection. */
+-  function sendData(socket: WebSocket, data: string): void {
+-    if (socket.readyState !== WebSocket.OPEN) return;
++  /** Reject unusable peers before spending work serializing a response or broadcast. */
++  function canSend(socket: WebSocket): boolean {
++    if (socket.readyState !== WebSocket.OPEN) return false;
+     if (socket.bufferedAmount > MAX_BUFFERED_BYTES) {
+       socket.terminate();
+-      return;
++      return false;
+     }
+-    socket.send(data);
++    return true;
    }
  
 -  function sendEach(clients: Iterable<WebSocket>, frame: ServerFrame): void {
 +  function sendEach(clients: Iterable<WebSocket>, frame: ServerFrame, additionalClients?: Iterable<WebSocket>): void {
      let data: string | undefined;
-     for (const socket of clients) sendData(socket, (data ??= JSON.stringify(frame)));
-+    if (additionalClients) for (const socket of additionalClients) sendData(socket, (data ??= JSON.stringify(frame)));
+-    for (const socket of clients) sendData(socket, (data ??= JSON.stringify(frame)));
++    for (const socket of clients) {
++      if (canSend(socket)) socket.send(data ??= JSON.stringify(frame));
++    }
++    if (additionalClients) {
++      for (const socket of additionalClients) {
++        if (canSend(socket)) socket.send(data ??= JSON.stringify(frame));
++      }
++    }
    }
  
    function broadcast(frame: ServerFrame): void {
@@ -359,7 +385,7 @@ index 4ae6a53..fbb68a2 100644
    }
  
    function broadcastBots(frame: ServerFrame): void {
-@@ -296,10 +304,11 @@ export function createHub(options: HubOptions): Hub {
+@@ -296,10 +310,11 @@ export function createHub(options: HubOptions): Hub {
      if (scope && request.kind !== "text") return fail(socket, "INVALID_REQUEST", request.requestId);
      const target = { channelId: request.chatId, kind: channel.kind };
      if (request.kind === "text") {
@@ -373,7 +399,7 @@ index 4ae6a53..fbb68a2 100644
            return fail(socket, "INVALID_REQUEST", request.requestId);
          }
        }
-@@ -377,6 +386,11 @@ export function createHub(options: HubOptions): Hub {
+@@ -377,6 +392,11 @@ export function createHub(options: HubOptions): Hub {
      }
    }
  
@@ -385,7 +411,7 @@ index 4ae6a53..fbb68a2 100644
    /**
     * The text sent to TypeSafe is the server's own copy of a message it has shown, from someone else:
     * a client cannot use this to send arbitrary text out, or to rate its own messages. Bots are also
-@@ -387,12 +401,32 @@ export function createHub(options: HubOptions): Hub {
+@@ -387,12 +407,32 @@ export function createHub(options: HubOptions): Hub {
      if (!parsed.ok) return fail(socket, "INVALID_REQUEST", parsed.requestId);
      const { requestId, chatId, messageId } = parsed.value;
      if (!scam) return fail(socket, "SCAM_CHECK_UNAVAILABLE", requestId);
@@ -422,7 +448,7 @@ index 4ae6a53..fbb68a2 100644
        const analysis = await scam.analyzeScam(message.text);
        if (account !== generation || login.state !== "ready") return;
        send(socket, { type: "scam:result", requestId, chatId, messageId, analysis });
-@@ -428,8 +462,8 @@ export function createHub(options: HubOptions): Hub {
+@@ -428,8 +468,8 @@ export function createHub(options: HubOptions): Hub {
      const placeholder = store.unsend(messageId, chatHint);
      if (!placeholder) return;
      const frame: ServerFrame = { type: "message:unsend", chatId: placeholder.channelId, messageId };
@@ -433,7 +459,7 @@ index 4ae6a53..fbb68a2 100644
      broadcastChannel(placeholder.channelId, placeholder.channelId === chatHint ? before : undefined);
    }
  
-@@ -443,8 +477,9 @@ export function createHub(options: HubOptions): Hub {
+@@ -443,8 +483,9 @@ export function createHub(options: HubOptions): Hub {
        clearTimeout(refreshTimer);
        refreshTimer = setTimeout(() => { void refreshChannels(); }, NEW_CHANNEL_REFRESH_MS);
      }
@@ -445,7 +471,7 @@ index 4ae6a53..fbb68a2 100644
      // The list entry follows: activity order and preview move with the newest message.
      if (before) broadcastChannel(message.channelId, before);
    }
-@@ -490,6 +525,33 @@ export function createHub(options: HubOptions): Hub {
+@@ -490,6 +531,33 @@ export function createHub(options: HubOptions): Hub {
      }
    }
  
@@ -479,7 +505,7 @@ index 4ae6a53..fbb68a2 100644
    /** Local only (no LINE request): the profile LINE gave at sign-in. */
    function handleProfile(socket: WebSocket, frame: Record<string, unknown>): void {
      const requestId = requestIdOf(frame);
-@@ -544,6 +606,8 @@ export function createHub(options: HubOptions): Hub {
+@@ -544,6 +612,8 @@ export function createHub(options: HubOptions): Hub {
        seenReads.clear();
        readFetches.clear();
        ownSquareSenders.clear();
@@ -488,7 +514,7 @@ index 4ae6a53..fbb68a2 100644
        status = "starting";
      }
      broadcastAll({ type: "auth:state", state });
-@@ -579,7 +643,7 @@ export function createHub(options: HubOptions): Hub {
+@@ -579,7 +649,7 @@ export function createHub(options: HubOptions): Hub {
      watch(socket, "bot");
      const sendLimiter = new SlidingWindowLimiter(config.limits.sendsPerSecond, 1000);
      const historyLimiter = new SlidingWindowLimiter(HISTORY_PER_SECOND, 1000);
@@ -497,7 +523,7 @@ index 4ae6a53..fbb68a2 100644
      send(socket, { type: "auth:state", state: login.state });
      send(socket, { type: "status", state: status });
      if (login.state === "ready") {
-@@ -607,6 +671,10 @@ export function createHub(options: HubOptions): Hub {
+@@ -607,6 +677,10 @@ export function createHub(options: HubOptions): Hub {
            if (!botScamLimiter.allow()) fail(socket, "RATE_LIMITED", requestIdOf(frame as Record<string, unknown>));
            else void handleScamCheck(socket, frame as Record<string, unknown>, botScope);
            return;
