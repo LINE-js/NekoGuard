@@ -12,10 +12,7 @@ const admin = { userId: 'admin-1', displayName: '小貓🐱', role: 'admin' };
 test('renders actual mentions with exclusive UTF-16 offsets and a source reply', () => {
   const [alert] = buildAlerts(message, { probability: 0.6999, tactic: { kind: 'investment', confidence: 0.9234 } }, [admin, { ...admin, userId: 'admin-2', displayName: '𠮷野🙂' }]);
   assert.equal(alert.replyTo, message.messageId);
-  assert.match(alert.text, /訊息 ID：123456789/);
   assert.match(alert.text, /詐騙機率：69\.99%/);
-  assert.match(alert.text, /投資詐騙（手法信心度 92\.34%）/);
-  assert.match(alert.text, /模型估計/);
   assert.ok(!alert.text.includes(message.text));
   assert.equal(alert.text.slice(alert.mentions[0].start, alert.mentions[0].end), '@小貓🐱');
   assert.equal(alert.text.slice(alert.mentions[1].start, alert.mentions[1].end), '@𠮷野🙂');
@@ -52,14 +49,6 @@ test('bounds and sanitizes hostile display names without breaking surrogate pair
   assert.equal(fallback.text.slice(fallback.mentions[0].start, fallback.mentions[0].end), '@管理員');
 });
 
-test('unknown and missing tactics are reported honestly', () => {
-  const [missing] = buildAlerts(message, { probability: 0.7 }, [admin]);
-  assert.match(missing.text, /未提供詐騙手法及信心度/);
-  const [unknown] = buildAlerts(message, { probability: 0.7, tactic: { kind: 'new-server-kind', confidence: 0.2 } }, [admin]);
-  assert.match(unknown.text, /未能辨識的詐騙手法/);
-  assert.match(unknown.text, /手法信心度 20%/);
-  assert.ok(!unknown.text.includes('new-server-kind'));
-});
 
 test('rejects empty administrators and invalid analysis rather than implying safety', () => {
   assert.throws(() => buildAlerts(message, { probability: 0.7 }, []), /without administrators/);

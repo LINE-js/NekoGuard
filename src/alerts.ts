@@ -13,6 +13,10 @@ const tacticLabels: Readonly<Record<string, string>> = {
   other: '其他詐騙手法',
 };
 
+const percentFormat = new Intl.NumberFormat('zh-TW', {
+  maximumFractionDigits: 12, useGrouping: false,
+});
+
 export function buildAlerts(
   message: Pick<Message, 'messageId'>,
   analysis: ScamAnalysis,
@@ -42,11 +46,10 @@ export function buildAlerts(
   if (unique.length === 0) throw new Error('Cannot create an alert without administrators.');
 
   // Formatting never participates in the guard's unrounded threshold comparison.
-  const percentOptions: Intl.NumberFormatOptions = { maximumFractionDigits: 12, useGrouping: false };
-  const probability = (analysis.probability * 100).toLocaleString('zh-TW', percentOptions);
+  const probability = percentFormat.format(analysis.probability * 100);
   const label = tactic && Object.hasOwn(tacticLabels, tactic.kind) ? tacticLabels[tactic.kind] : '未能辨識的詐騙手法';
   const tacticText = tactic
-    ? `${label}（手法信心度 ${(tactic.confidence * 100).toLocaleString('zh-TW', percentOptions)}%）`
+    ? `${label}（手法信心度 ${percentFormat.format(tactic.confidence * 100)}%）`
     : '未提供詐騙手法及信心度';
   const sourceId = message.messageId.replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/gu, ' ');
   const header = `疑似詐騙提醒\n訊息 ID：${sourceId}\n詐騙機率：${probability}%\n手法：${tacticText}\n此為模型估計，並非事實判定，請管理員查證。\n`;
