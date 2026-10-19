@@ -88,6 +88,14 @@ export class ApiClient extends EventEmitter implements Api {
     const socket = this.socket;
     if (!socket || socket.readyState !== WebSocket.OPEN) return Promise.reject(new ApiError("WS_DISCONNECTED"));
     const requestId = (++this.nextRequestId).toString(36);
+    let payload: string;
+    try {
+      // Serialization can fail before any bytes are sent; do not leave an orphaned
+      // pending promise or timeout when fields contain cycles, BigInt, or getters.
+      payload = JSON.stringify({ ...fields, type, requestId });
+    } catch {
+      return Promise.reject(new ApiError("INVALID_REQUEST"));
+    }
     const { promise, resolve, reject } = Promise.withResolvers<Frame>();
     const timer = setTimeout(() => {
       this.pending.delete(requestId);
@@ -95,7 +103,7 @@ export class ApiClient extends EventEmitter implements Api {
       reject(new ApiError("REQUEST_TIMEOUT"));
     }, this.timeoutMs);
     this.pending.set(requestId, { responseType, resolve, reject, timer });
-    socket.send(JSON.stringify({ ...fields, type, requestId }), (error) => {
+    socket.send(payload, (error) => {
       if (!error || !this.pending.delete(requestId)) return;
       clearTimeout(timer);
       reject(new ApiError("WS_SEND_FAILED"));

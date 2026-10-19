@@ -68,3 +68,32 @@ test('a late response to a timed-out request cannot settle a newer request', asy
   socket.send(JSON.stringify({ type: 'scam:result', requestId: newRequest.requestId, analysis: { probability: 0 } }));
   assert.equal((await next).analysis.probability, 0);
 });
+
+test('unserializable fields reject without transmitting or leaving orphaned requests', async t => {
+  const { client, socket } = await connect(t);
+  const received = [];
+  socket.on('message', bytes => {
+    const frame = JSON.parse(bytes.toString());
+    received.push(frame.messageId);
+    socket.send(JSON.stringify({
+      type: 'scam:result', requestId: frame.requestId, analysis: { probability: 0.25 },
+    }));
+  });
+  const circular = {};
+  circular.self = circular;
+  for (const fields of [
+    { circular },
+    { messageId: 1n },
+    { get text() { throw new Error('sensitive input must not escape'); } },
+  ]) {
+    await assert.rejects(client.request('scam:check', fields, 'scam:result'), {
+      code: 'INVALID_REQUEST', message: 'INVALID_REQUEST',
+    });
+  }
+  const result = await client.request('scam:check', { messageId: 'valid' }, 'scam:result');
+  assert.equal(result.analysis.probability, 0.25);
+  assert.deepEqual(received, ['valid']);
+  // Closing rejects any leaked pending promise; node:test also fails on unhandled rejections.
+  client.close();
+  await new Promise(resolve => setImmediate(resolve));
+});
