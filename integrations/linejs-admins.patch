@@ -1,8 +1,8 @@
 diff --git a/AGENTS.md b/AGENTS.md
-index 59cf16e..5fd35c5 100644
+index 59cf16e..f8c1cd9 100644
 --- a/AGENTS.md
 +++ b/AGENTS.md
-@@ -62,14 +62,21 @@ Gate 依 [PLAN.md](PLAN.md) 逐關驗收，不跳關；Gate 0 遠端需存在四
+@@ -62,14 +62,22 @@ Gate 依 [PLAN.md](PLAN.md) 逐關驗收，不跳關；Gate 0 遠端需存在四
  2. QR URL 與 PIN **一次性顯示、不入日誌、不落盤**。
  3. `session.json` 含憑證與 E2EE key material：chmod **600**、列入 `.gitignore`、不入日誌、不分享。
  4. 網頁 WS 升級須 `Origin`（`http`／`https`，後者供 TLS 反向代理／自訂網域）的主機部分等於 `Host` 標頭並帶瀏覽器 cookie；其餘來源拒絕升級。
@@ -10,6 +10,7 @@ index 59cf16e..5fd35c5 100644
 -6. 媒體快取上限預設 200MB（LRU）；收到的媒體只能請求已見過的訊息（`msg-<id>`），單檔上限 `limits.downloadMaxBytes`（預設 50MB），類型一律以位元組內容判斷且不供應 SVG／HTML；訊息媒體不得被瀏覽器快取。
 +5. 每連線頻率限制：`message:send` ≤ 5/秒（收回 `message:unsend` 共用此額度，且只接受伺服器已顯示、本帳號所發的訊息，機器人不可用；回應 `message:react` 也共用此額度，只接受伺服器已顯示、未收回的訊息，機器人不可用）；`POST /media/upload` 圖片 ≤ 10MB/檔、影片 ≤ 50MB/檔（`limits.uploadVideoMaxBytes`）、≤ 5 次/分鐘；frame ≤ 256KB。上傳暫存的十分鐘有效期使用單調時間，於新增／讀取時清除到期項目；成功發送後移除、登出清空，既有容量限制不變。
 +6. 媒體快取上限預設 200MB（LRU）；收到的媒體只能請求已見過的訊息（`msg-<id>`），單檔上限 `limits.downloadMaxBytes`（預設 50MB），類型一律以位元組內容判斷且不供應 SVG／HTML；訊息媒體不得被瀏覽器快取。貼圖、大頭照、貼圖包圖示與 LINE 表情貼的 CDN 回應維持 2 MiB 上限：宣告超限即取消，未宣告或低報大小時也須逐塊計數，超限立即停止，不得先完整下載再拒絕。貼圖 metadata 維持解碼後 1,000,000 個 UTF-16 單位上限並於串流中執行；不得誤改為 bytes 限制，須保留跨塊 UTF-8／BOM／結尾解碼與既有 ID 區間 fallback。拒絕的 CDN 回應與帶憑證下載訊息媒體／檔案的非成功回應，須盡力取消未使用本文；取消失敗不得覆寫既有缺檔、錯誤或阻止 fallback。
++   可快取的 CDN 圖片提供內容 ETag，條件式 GET／HEAD 命中才回 304，仍須先完成 cookie 與資源檢查；條件式 Range 只接受相符的強驗證標記。私人訊息媒體與檔案不得提供 ETag 或 304，維持 `private, no-store`。驗證標記不得額外保留已被 LRU 淘汰的媒體位元組。
  7. 輸入驗證：`chatId` 格式（`u／c／r／s／m` 開頭；OpenChat 為 `m`）、`text` ≤ 8000 字、`limit` ≤ 100、`packageId`／`stickerId` 限正整數、上傳媒體以內容判斷（圖片 PNG／JPEG／GIF；影片 MP4／MOV，以 `ftyp` 品牌辨識，聲稱的 Content-Type 只用來選擇大小上限；影片長度取自 `moov/mvhd`，不採用瀏覽器給的值）。
  8. 對外一律 generic 錯誤；內部錯誤只入本地日誌。
  9. 依賴釘選版本；`npm audit` 無 high 以上（Gate 4 驗收）。
@@ -27,7 +28,7 @@ index 59cf16e..5fd35c5 100644
  
  內部日誌也不得包含憑證、token、QR URL、PIN 或 key material；不得直接 dump 套件錯誤物件、session 或登入 payload。圖片／貼圖／影片／語音位元組一律走 HTTP，WS 不傳位元組；收到的檔案只以 `file-<id>` 附件下載（`Content-Disposition: attachment`、`application/octet-stream`，不嗅探、不內嵌），規則同收到的媒體。訊息不落盤；每頻道最多 500 則，同 messageId 去重，編輯覆寫快取。LINE listen 失效採退避重啟；QR 失敗不自動循環，須由使用者動作重新產生。
  
-@@ -77,6 +84,8 @@ Gate 依 [PLAN.md](PLAN.md) 逐關驗收，不跳關；Gate 0 遠端需存在四
+@@ -77,6 +85,8 @@ Gate 依 [PLAN.md](PLAN.md) 逐關驗收，不跳關；Gate 0 遠端需存在四
  
  其他 adapter 注意事項：OpenChat 歷史無「最新 N 則」查詢，只能由最舊事件向前走完再於記憶體分頁（快取 10 分鐘，期間以即時訊息與自己送出的訊息補上；LINE 監聽出錯即整個捨棄）；talk 歷史游標為 `deliveredTime:messageId` 且上界含端點，需多取一則並剔除錨點；非好友的群組成員名稱與大頭照以 `getContactsV2`／`getSquareMember` 補查（限時、限量、失敗退避），社群管理員角色同樣來自 `getSquareMember`；他人已讀位置來自 `getMessageReadRange` 與 `NOTIFIED_READ_MESSAGE`。**回報自己的已讀**（`sendChatChecked`／OpenChat `markAsRead`）會改變真實帳號狀態（對方看到「已讀」），因此只在小語要求下啟用：由網頁在聊天開啟且頁面可見時送 `chat:read`，伺服器只接受已顯示過的訊息、每個位置只送一次，並可用 `chat.sendReadReceipts: false` 關閉；驗證時不得對真實聯絡人的聊天室測試。已擁有貼圖包來自商店服務 `getOwnedProductSummaries`（linejs 3.4.2 未接線，經 `base.request.request` 呼叫 `/TSHOP4`），貼圖 id 與標題來自公開 CDN 的 `productInfo.meta`，失敗時退回 LINE 回傳的 id 區間。即時事件依聊天室各自排序處理：一個聊天室的成員查詢變慢不會拖住其他聊天室；好友資料以每批 100 人、最多 3 批同時查詢。
  
@@ -37,10 +38,10 @@ index 59cf16e..5fd35c5 100644
  
  LINE operation 與連線注意事項：linejs 未記載多數 operation 的參數排列，`SEND_CHAT_CHECKED`（手機已讀）只取 `param1` 且須為伺服器已知聊天室；群組／個人資料／聊天室成員變動不解析參數，只觸發節流的頻道清單重新整理（3 秒合併、最多每 30 秒一次），不得改成依參數猜測內容。頻道清單的最後一則訊息（`Channel.lastMessage`）是預覽，不登記媒體來源，不能藉此下載。WS 心跳：伺服器以協定層 Ping 每 30 秒檢查、兩輪無回應即關閉；網頁 `ping` 需 10 秒內收到 `pong`，回到前景立即探測。斷線記錄（網頁主控台、服務日誌 `WS_CLOSED`）只可含時間、close code、截短的 reason 與前後景狀態，不得含標頭、cookie 或 Token。
 diff --git a/PLAN.md b/PLAN.md
-index 49acd5b..8c1caa1 100644
+index 49acd5b..5af6cbf 100644
 --- a/PLAN.md
 +++ b/PLAN.md
-@@ -144,23 +144,70 @@
+@@ -144,23 +144,72 @@
  
  > 實作補完（協定版本仍為 2）：登出／換帳號以 session generation 作廢歷史、發送、回應、收回、已讀與頻道查詢的舊結果；歷史重新載入也同步清除已取消的回應。OpenChat 歷史採同聊天室 single-flight、時間＋訊息 id 錨點，快取最多 5 個聊天室各 5000 則、10 分鐘，合併即時訊息與狀態，過期時重新取得回應，僅已提供頁面的訊息授權媒體。網頁搜尋維持即時更新並跨聊天室依時間排序；初次歷史失敗可重試，回應更新不重建媒體 DOM，登出清除搜尋、私人畫面與通知。隔離測試與無頭靜音瀏覽器已驗證；尚未對本次變動重新進行真實 LINE Gate 驗收。
  
@@ -82,6 +83,8 @@ index 49acd5b..8c1caa1 100644
 +
 +> talk 聯絡人批次共用：重疊 ID 等待既有查詢，只有新 ID 送入原有百人批次；每個呼叫維持獨立五秒等候，完成／失敗回收，舊登入結果不能刪除新登入的查詢。實際 Provider＋WebSocket 處理重疊的兩份百人歷史及即時訊息，完整回覆 hash 保持一致，所需成員已就緒的即時訊息不再等待其他批次。回歸測試涵蓋偏好名稱、個別期限、失敗退避重試與登入隔離。294 項測試通過，未連接真實 LINE。
 +
++> HTTP 圖片條件式回應：可快取的 CDN 圖片以內容 ETag 回覆 GET／HEAD 重驗證，保留 cookie、資源存在與錯誤檢查，支援弱比較、清單及萬用值；相符條件優先於 Range，If-Range 僅接受相符強標記。私人附件仍 no-store，不產生 ETag／304。標記以弱參照跟隨快取 Buffer，不阻止 LRU 回收。實際 Provider＋MediaService＋HTTP smoke 驗證六種圖片路徑、內容變更、快取淘汰、HEAD／Range 與私人附件隔離；299 項測試通過，未連接真實 LINE。
++
  > v1.15（小語裁示：JEV 詐騙分析，協定版本仍為 2）：`config.yaml` 新增選用區段 `jev`（`token`：TypeSafe API 金鑰，有值才啟用；`model`：預設 `jev-1.13.0`）。新增 Server → Client `scam:state`（`{ enabled }`，連線即送、只給網頁，不含金鑰）與 `scam:result`（`{ requestId, chatId, messageId, analysis: { probability, tactic?: { kind, confidence } } }`，只送給要求的連線），Client → Server `scam:check`（`{ requestId, chatId, messageId }`，僅網頁、每連線每分鐘 10 次）。伺服器只接受已顯示、非本帳號、未收回、已解密、非系統訊息的文字訊息，以自己快取的文字經 `src/jev/` 呼叫 `POST https://api.typesafe.ai/v1/systemone`（Noul 題問是否為詐騙、Choice 題問最接近的手法；題目用英文，因官方說明英文準確度最佳），回應 fail-closed；未設定金鑰回 `SCAM_CHECK_UNAVAILABLE`，失敗回 `SCAM_CHECK_FAILED`。網頁對別人的文字訊息右鍵出現「詐騙機率分析」，以官方範例門檻分級（> 0.8 高度疑似、≤ 0.2 不太像、其間無法確定）並註明為模型估計、文字已送至 TypeSafe。尚未以有效金鑰實測真實分析結果。
  
  > v1.16（小語裁示：JEV 開放給機器人 API，協定版本仍為 2；MCP 入口裁示不做）：機器人連線新增 `scam:check`（`{ requestId, chatId, messageId }`），規則同網頁——只接受伺服器已顯示、非本帳號、未收回、已解密、非系統訊息的文字訊息，送伺服器快取的文字——另限 `api.chats` 內的聊天室（其餘 `UNKNOWN_CHAT`），所有機器人連線合計每分鐘 10 次（與網頁各連線的額度分開）；成功回 `scam:result`，未設定金鑰回 `SCAM_CHECK_UNAVAILABLE`。機器人不收 `scam:state`。不接受機器人傳任意文字。
@@ -112,7 +115,7 @@ index 49acd5b..8c1caa1 100644
  | `channels` | `{ channels: Channel[] }`（snapshot，連線即送、變動重送） |
  | `messages` | `{ chatId, messages: Message[] }`（連線時快照，每個聊天室一個影格；舊訊息，不計未讀） |
  | `message` | `{ message: Message }`（即時新訊息） |
-@@ -190,6 +237,7 @@
+@@ -190,6 +239,7 @@
  | `message:react` | `{ requestId, chatId, messageId, reaction: "NICE"｜"LOVE"｜"FUN"｜"AMAZING"｜"SAD"｜"OMG"｜null }`（僅網頁，與 `message:send` 共用頻率上限） |
  | `scam:check` | `{ requestId, chatId, messageId }`（網頁每連線每分鐘 10 次；機器人限 `api.chats`、所有機器人合計每分鐘 10 次；只接受別人傳來、已顯示、未收回的文字訊息） |
  | `profile:get` | `{ requestId }`（自己的 `profile`；網頁與機器人皆可，不呼叫 LINE） |
@@ -120,7 +123,7 @@ index 49acd5b..8c1caa1 100644
  | `channels:refresh` | `{}` |
  | `api:token:create` / `api:token:revoke` | `{}`（產生或撤銷機器人 Token，並中斷所有機器人連線） |
  | `ping` | `{}` |
-@@ -197,7 +245,7 @@
+@@ -197,7 +247,7 @@
  ### 機器人 API（`/api/ws`）
  - 升級條件：`api.enabled`、**無 `Origin`**、`Authorization: Bearer linejs_…` 符合目前 Token；否則 403（同時超過 4 個連線回 429）。`Host` 不限制（同網頁）。
  - 連線時收到 `hello`、`auth:state`、`status`、`auth:ready`、僅含 `api.chats` 的 `channels`；之後只有這些聊天室的 `message`／`message:edit`。不重播、不給 `read`／`update:available`／`api:state`。
@@ -130,10 +133,10 @@ index 49acd5b..8c1caa1 100644
  
  ### HTTP
 diff --git a/README.en.md b/README.en.md
-index 6b97c31..5dd8276 100644
+index 6b97c31..804742b 100644
 --- a/README.en.md
 +++ b/README.en.md
-@@ -26,7 +26,25 @@ flowchart LR
+@@ -26,7 +26,27 @@ flowchart LR
  
  The backend binds only to `127.0.0.1` by default (configurable in `config.yaml`; see “Configuration”), on port `3789` by default. The backend builds with `tsc` into `dist/`; the frontend builds with Vite into `dist/web/`. Messages are stored only in memory (up to 500 per channel, deduplicated by id, with edits overwriting existing messages), without a database. Stickers, profile pictures, and received media are cached by the backend in an LRU cache (200MB by default) and served over HTTP on the same port.
  
@@ -148,6 +151,8 @@ index 6b97c31..5dd8276 100644
 +
 +CDN responses rejected by status or sticker Content-Type have their unused bodies cancelled to stop unnecessary transfer. Cancellation failures do not change existing missing-media or error results, image fallbacks, or metadata fallbacks. Authenticated downloads of message media and files also cancel non-success response bodies while preserving existing missing-media and error classifications.
 +
++Cacheable avatars, stickers, sticker-package icons and LINE emoji expose content ETags. Matching GET/HEAD `If-None-Match` requests return a bodyless 304 rather than retransmitting the image, after cookie authorization and resource checks. For these images, `If-Range` requires a matching strong validator; otherwise the full representation is sent. Private message media and files remain `private, no-store`, without ETags or 304 responses. Browser cache lifetimes and server LRU capacity are unchanged.
++
 +Concurrent sticker-catalog requests in one login session share the pending owned-product query and CDN metadata load, while each request still receives its own complete reply. Successful results keep the ten-minute cache, measured by monotonic elapsed time and unaffected by wall-clock corrections; failures can be retried by a later request. Logout detaches the shared work; old completions cannot affect the next account's cache or load, and start no further metadata batches. Already-issued requests may still complete. Existing quotas and the sticker-ID range fallback on metadata failure are unchanged.
 +
 +Sticker metadata and owned-product ID ranges stop scanning once the existing 200-entry output limit per package is reached. ID order, duplicate entries and subsequent packages are preserved.
@@ -160,7 +165,7 @@ index 6b97c31..5dd8276 100644
  
  ## Requirements
  
-@@ -164,18 +182,25 @@ Lets your own programs (bots) send and receive messages. **Disabled by default**
+@@ -164,18 +184,25 @@ Lets your own programs (bots) send and receive messages. **Disabled by default**
  | Bot → Service | `history:fetch` | `{ requestId, chatId, limit?, before? }`: the same pagination as the web interface, without a read-receipt snapshot |
  | Bot → Service | `scam:check` | `{ requestId, chatId, messageId }`: check with Jev a text message **from someone else** in `api.chats` that the service has shown (received live or returned by `history:fetch`); the server sends its own cached text. Requires `jev.token` (otherwise `SCAM_CHECK_UNAVAILABLE`); 10 per minute across all bots, each billed by TypeSafe. Success returns `scam:result { requestId, chatId, messageId, analysis: { probability, tactic? } }` |
  | Bot → Service | `profile:get` | `{ requestId }`: get your own ID and name at any time; returns `profile { requestId, profile: { userId, displayName, pictureId? } }` (the same as `auth:ready`; no LINE request; shares the 10-per-second-per-connection budget with `history:fetch`; returns `INVALID_REQUEST` when not signed in) |
@@ -190,10 +195,10 @@ index 6b97c31..5dd8276 100644
  
  ```js
 diff --git a/README.ja.md b/README.ja.md
-index a6e80b5..acd541d 100644
+index a6e80b5..fd0fb2b 100644
 --- a/README.ja.md
 +++ b/README.ja.md
-@@ -26,7 +26,25 @@ flowchart LR
+@@ -26,7 +26,27 @@ flowchart LR
  
  バックエンドは既定で `127.0.0.1` のみにバインドします（`config.yaml` で変更できます。「設定」を参照）。既定のポートは `3789` です。バックエンドは `tsc` で `dist/` に、フロントエンドは Vite で `dist/web/` にビルドします。メッセージはメモリにのみ保存し（チャンネルごとに最大 500 件、同じ id は重複排除、編集は上書き）、データベースは使用しません。スタンプ、プロフィール画像、受信したメディアはバックエンドの LRU キャッシュ（既定 200MB）を経由し、同じポートの HTTP で配信します。
  
@@ -208,6 +213,8 @@ index a6e80b5..acd541d 100644
 +
 +ステータスまたはスタンプの Content-Type により拒否された CDN レスポンスは、未使用の本文をキャンセルして不要な転送を停止します。キャンセル失敗時も、既存の未検出・エラー応答や、画像・メタデータのフォールバックは変更しません。認証付きのメッセージメディア・ファイル取得でも、成功以外のレスポンス本文を同様にキャンセルし、既存の未検出・エラー分類を維持します。
 +
++キャッシュ可能なプロフィール画像、スタンプ、パッケージアイコン、LINE 絵文字には内容に基づく ETag を付けます。GET／HEAD の `If-None-Match` が一致すれば、cookie 認証とリソース確認後に本文なしの 304 を返し、同じ画像を再送しません。これらの画像の `If-Range` は一致する強い検証子のみ受け付け、それ以外は内容全体を返します。非公開のメッセージメディアとファイルは `private, no-store` のまま、ETag や 304 を提供しません。ブラウザーのキャッシュ期間とサーバー LRU の容量は変更しません。
++
 +同一ログインセッション内の同時スタンプ一覧要求は、処理中の所有商品照会と CDN メタデータ取得を共有します。各要求には個別に完全な応答を返します。成功結果のキャッシュは単調時計による経過時間で 10 分間とし、システム時刻の補正には影響されません。失敗後は後続の要求で再試行できます。ログアウト時に共有処理との関連を解除し、古い処理は新アカウントのキャッシュや取得処理に影響せず、後続のメタデータ取得バッチも開始しません。送信済みの要求は完了する場合があります。既存の回数制限と、メタデータ取得失敗時のスタンプ ID 範囲へのフォールバックは変更しません。
 +
 +スタンプのメタデータと所有商品の ID 範囲は、パッケージごとの既存の出力上限 200 件に達すると残りの走査を停止します。ID の順序、重複項目、後続のパッケージは維持します。
@@ -220,7 +227,7 @@ index a6e80b5..acd541d 100644
  
  ## 動作要件
  
-@@ -164,18 +182,25 @@ HTTP：`GET /media/:mediaId`（スタンプ、スタンプパックのアイコ
+@@ -164,18 +184,25 @@ HTTP：`GET /media/:mediaId`（スタンプ、スタンプパックのアイコ
  | ボット → サービス | `history:fetch` | `{ requestId, chatId, limit?, before? }`：Web ページと同じページ取得ですが、既読 snapshot は含みません |
  | ボット → サービス | `scam:check` | `{ requestId, chatId, messageId }`：`api.chats` 内の**相手から届いた**、サービスが表示済み（リアルタイム受信または `history:fetch` で取得）のテキストメッセージを Jev で分析します。サーバーは自身のキャッシュのテキストを送ります。`jev.token` の設定が必要で（未設定時は `SCAM_CHECK_UNAVAILABLE`）、全ボット合計で毎分 10 回、1 回ごとに TypeSafe の料金がかかります。成功時は `scam:result { requestId, chatId, messageId, analysis: { probability, tactic? } }` |
  | ボット → サービス | `profile:get` | `{ requestId }`：自分の ID と名前をいつでも取得できます。`profile { requestId, profile: { userId, displayName, pictureId? } }` を返します（`auth:ready` と同じ内容。LINE には問い合わせず、`history:fetch` と接続ごとに毎秒 10 回の枠を共有。未ログイン時は `INVALID_REQUEST`） |
@@ -250,10 +257,10 @@ index a6e80b5..acd541d 100644
  
  ```js
 diff --git a/README.md b/README.md
-index 7704eb9..00b62fb 100644
+index 7704eb9..ef28c5d 100644
 --- a/README.md
 +++ b/README.md
-@@ -26,7 +26,25 @@ flowchart LR
+@@ -26,7 +26,27 @@ flowchart LR
  
  後端預設只綁定 `127.0.0.1`（可在 `config.yaml` 改，見〈設定〉），預設埠 `3789`。後端 `tsc` 建置至 `dist/`；前端 Vite 建置至 `dist/web/`。訊息只存記憶體（每頻道最多 500 則，同 id 去重，編輯覆寫），不使用資料庫；貼圖、大頭照與收到的媒體經後端以 LRU（預設 200MB）快取後由同埠 HTTP 提供。
  
@@ -268,6 +275,8 @@ index 7704eb9..00b62fb 100644
 +
 +CDN 回應因狀態碼或貼圖 Content-Type 被拒絕時會主動取消未使用的本文，避免後續無用傳輸；取消失敗不改變原本的缺檔、錯誤或圖片／metadata fallback 行為。帶登入憑證下載訊息圖片／檔案時，非成功回應也採相同回收方式，保留既有缺檔與錯誤分類。
 +
++可快取的頭像、貼圖、貼圖包圖示與 LINE 表情貼提供內容 ETag；`If-None-Match` 相符的 GET／HEAD 回傳無本文的 304，避免重新傳送相同圖片，仍須先通過 cookie 與資源檢查。這些圖片的 `If-Range` 只接受相符的強驗證標記，否則回傳完整內容。私人訊息媒體與檔案維持 `private, no-store`，不提供 ETag 或 304；瀏覽器快取期限與服務端 LRU 容量不變。
++
 +同一登入工作階段的並行貼圖清單要求共用尚未完成的商店查詢與 CDN metadata 載入，每個要求仍各自收到完整回覆。成功後維持十分鐘快取，以單調經過時間計算，不受系統校時影響；失敗可由後續要求重試。登出解除共用關聯，舊工作不影響新帳號的快取或載入，也不再啟動後續 metadata 批次；已送出的要求可能仍會完成。既有配額與 metadata 失敗時的貼圖 ID 區間 fallback 不變。
 +
 +貼圖 metadata 與商品 ID 區間收滿每包既有的 200 筆輸出後即停止掃描其餘項目；不改變 ID 順序、重複項目或後續貼圖包。
@@ -280,7 +289,7 @@ index 7704eb9..00b62fb 100644
  
  ## 環境需求
  
-@@ -164,18 +182,25 @@ HTTP：`GET /media/:mediaId`（貼圖、貼圖包圖示、大頭照與原圖、
+@@ -164,18 +184,25 @@ HTTP：`GET /media/:mediaId`（貼圖、貼圖包圖示、大頭照與原圖、
  | 機器人 → 服務 | `history:fetch` | `{ requestId, chatId, limit?, before? }`：與網頁相同的分頁，但不附已讀快照 |
  | 機器人 → 服務 | `scam:check` | `{ requestId, chatId, messageId }`：以 Jev 分析 `api.chats` 內**別人傳來**、服務已顯示（即時收到或 `history:fetch` 取得）的文字訊息；伺服器送自己快取的文字。需設定 `jev.token`（否則 `SCAM_CHECK_UNAVAILABLE`），所有機器人合計每分鐘 10 次，每次依 TypeSafe 計費。成功回 `scam:result { requestId, chatId, messageId, analysis: { probability, tactic? } }` |
  | 機器人 → 服務 | `profile:get` | `{ requestId }`：隨時取得自己的 ID 與名稱，回 `profile { requestId, profile: { userId, displayName, pictureId? } }`（同 `auth:ready`；不呼叫 LINE，與 `history:fetch` 共用每連線每秒 10 次；未登入回 `INVALID_REQUEST`） |
@@ -310,12 +319,15 @@ index 7704eb9..00b62fb 100644
  
  ```js
 diff --git a/SECURITY.md b/SECURITY.md
-index c3e123e..6a1cf44 100644
+index c3e123e..740e703 100644
 --- a/SECURITY.md
 +++ b/SECURITY.md
-@@ -118,6 +118,7 @@ approval, and a regression against any of them is treated as a vulnerability.
+@@ -116,8 +116,9 @@ approval, and a regression against any of them is treated as a vulnerability.
+ | A WebSocket upgrade must pass **all** of: path `/ws`, an `http`/`https` `Origin` whose host equals the `Host` header (the scheme is not pinned so a TLS-terminating reverse proxy or custom domain works), and the per-process browser cookie. | `src/http/server.ts` (`authorizeUpgrade`), `src/ws/hub.ts` |
+ | The browser cookie is a 256-bit random per-process token, `HttpOnly; SameSite=Strict`, compared in constant time. It is issued only with the page. | `src/http/server.ts` |
  | `POST /media/upload` additionally requires same-origin `Origin` and the cookie, so another website cannot queue media for sending. | `src/http/server.ts` |
- | A strict CSP (`default-src 'none'`, `script-src 'self'`, `frame-ancestors 'none'`, no inline script) and `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store` are sent on every response. The one exception is the public build output under `/assets/` (content-hashed file names, no account data), which is `public, max-age=31536000, immutable`. | `src/http/server.ts` |
+-| A strict CSP (`default-src 'none'`, `script-src 'self'`, `frame-ancestors 'none'`, no inline script) and `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store` are sent on every response. The one exception is the public build output under `/assets/` (content-hashed file names, no account data), which is `public, max-age=31536000, immutable`. | `src/http/server.ts` |
++| A strict CSP (`default-src 'none'`, `script-src 'self'`, `frame-ancestors 'none'`, no inline script), `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer` are sent on every response. Caching defaults to `no-store`; public content-hashed build assets under `/assets/` use `public, max-age=31536000, immutable`, and cookie-protected CDN images use `private, max-age=86400`. | `src/http/server.ts` |
  | There is no HTTP login endpoint. Login runs only over the WebSocket. The CLI (`npm run cli`) is a client of that same WebSocket; it never reads or writes `session.json` itself. | `src/ws/hub.ts`, `src/cli.ts` |
 +| Sliding-window quotas for WebSocket actions and HTTP uploads use monotonic elapsed time. Wall-clock corrections cannot replenish a budget early or prolong exhaustion; configured limits, window lengths and sharing scopes remain unchanged. | `src/limit.ts` |
  
@@ -351,9 +363,13 @@ index c3e123e..6a1cf44 100644
  | Decrypt or parse failures **fail closed**: a placeholder is shown; content is never guessed. | project rule |
  
  ### Input, limits and abuse resistance
-@@ -173,7 +180,10 @@ approval, and a regression against any of them is treated as a vulnerability.
+@@ -171,9 +178,13 @@ approval, and a regression against any of them is treated as a vulnerability.
+ | Media types are determined from content bytes; SVG and HTML are never served as received media. | `src/media/service.ts` |
+ | Received files (`file-<id>`, same seen-message rule and size limit) are never sniffed or shown inline: always `application/octet-stream` with `Content-Disposition: attachment`, `no-store`, and no longer served once taken back. | `src/line/provider.ts`, `src/http/server.ts` |
  | Download size is capped (`limits.downloadMaxBytes`, default 50 MiB, at most 100 MiB) and the media cache is a bounded LRU. | `src/line/provider.ts`, `src/media/service.ts` |
- | Message media is served `private, no-store`; it must not linger in the browser cache. | `src/http/server.ts` |
+-| Message media is served `private, no-store`; it must not linger in the browser cache. | `src/http/server.ts` |
++| Message media and files are served `private, no-store`, without ETags or 304 responses; they must not linger in the browser cache. | `src/http/server.ts` |
++| Cacheable CDN images use content ETags and bodyless 304 responses for matching GET/HEAD `If-None-Match`. Cookie authorization and resource/error checks precede conditional handling. Their `If-Range` requires an exact strong-validator match, otherwise the full representation is sent. Validator caching must not retain evicted media bytes. | `src/http/server.ts` |
  | A message its sender took back keeps only sender and time in the cache (history pages and list previews included); its media is dropped from the media cache, a download already in progress is handed only to requests already waiting and never cached, and it is no longer fetched from LINE. | `src/model/store.ts`, `src/ws/hub.ts`, `src/line/provider.ts`, `src/media/service.ts` |
 -| Avatar, sticker and LINE emoji fetches use fixed LINE CDN origins with a timeout and `redirect: "error"`; emoji ids must be a 24-hex product id and a short number before they reach a URL. | `src/line/provider.ts`, `src/line/emoji.ts`, `src/media/service.ts` |
 +| Avatar, sticker, sticker-package icon and LINE emoji fetches use fixed LINE CDN origins with a timeout and `redirect: "error"`; emoji ids must be a 24-hex product id and a short number before they reach a URL. Their existing 2 MiB limit is enforced while streaming: an oversized Content-Length cancels before reading, and actual decoded chunks are counted even when the length is missing or understated. An over-limit stream is cancelled rather than fully buffered. | `src/line/provider.ts`, `src/line/emoji.ts`, `src/media/service.ts` |
@@ -363,6 +379,77 @@ index c3e123e..6a1cf44 100644
  | Messages are never written to disk. At most 500 are kept per channel in memory, de-duplicated by message id. | `src/model/store.ts` |
  
  ### PWA
+diff --git a/src/http/server.ts b/src/http/server.ts
+index 6f58cbd..a4b2802 100644
+--- a/src/http/server.ts
++++ b/src/http/server.ts
+@@ -1,5 +1,5 @@
+ import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+-import { randomBytes, timingSafeEqual } from "node:crypto";
++import { hash, randomBytes, timingSafeEqual } from "node:crypto";
+ import { readFile, realpath } from "node:fs/promises";
+ import { extname, resolve, sep } from "node:path";
+ import type { Config } from "../config.js";
+@@ -17,6 +17,8 @@ export interface WebServer {
+ 
+ export function createWebServer(config: Config, webRoot: string, media: MediaService, apiTokens: ApiTokenStore): WebServer {
+   const browserToken = randomBytes(32).toString("hex");
++  // Validators follow cached buffers without retaining media evicted from the LRU.
++  const mediaTags = new WeakMap<Buffer, string>();
+   // The Host header is deliberately not pinned, on loopback binds too (owner's decision): the service is reached
+   // under whatever name or IP the user uses (reverse proxy, LAN name, tunnel). Origin must still equal the Host
+   // it came in under, the cookie is required and cross-site requests are refused, but a DNS-rebinding page
+@@ -156,14 +158,29 @@ export function createWebServer(config: Config, webRoot: string, media: MediaSer
+         }
+         // Sticker and avatar bytes are immutable per id; received message media and files are private
+         // content and must not linger in the browser cache (the server-side LRU already avoids refetching).
+-        const cacheControl = id.startsWith("msg-") || id.startsWith("file-") ? "private, no-store" : "private, max-age=86400";
++        const privateMedia = id.startsWith("msg-") || id.startsWith("file-");
++        const cacheControl = privateMedia ? "private, no-store" : "private, max-age=86400";
++        let etag: string | undefined;
++        if (!privateMedia) {
++          etag = mediaTags.get(found.bytes);
++          if (etag === undefined) {
++            etag = `"${hash("sha256", found.bytes)}"`;
++            mediaTags.set(found.bytes, etag);
++          }
++        }
+         const length = found.bytes.length;
+-        const range = byteRange(request.headers.range, length);
+         // Files are whatever the sender chose (HTML, SVG, scripts): always a download, never rendered here.
+         const disposition = found.filename !== undefined
+           ? { "Content-Disposition": `attachment; filename="download"; filename*=UTF-8''${encodeURIComponent(found.filename).replace(/['()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)}` }
+           : {};
+-        const headers = { "Content-Type": found.mime, "Accept-Ranges": "bytes", "Cache-Control": cacheControl, ...disposition };
++        const headers = { "Content-Type": found.mime, "Accept-Ranges": "bytes", "Cache-Control": cacheControl, ...disposition, ...(etag ? { ETag: etag } : {}) };
++        if (etag && matchesETag(request.headers["if-none-match"], etag)) {
++          response.writeHead(304, headers);
++          response.end();
++          return;
++        }
++        // A stale or weak If-Range cannot authorize stitching bytes from different versions.
++        const range = byteRange(etag && request.headers["if-range"] !== undefined && request.headers["if-range"] !== etag ? undefined : request.headers.range, length);
+         if (range === "unsatisfiable") {
+           response.writeHead(416, { ...headers, "Content-Range": `bytes */${length}` });
+           response.end();
+@@ -212,6 +229,17 @@ export function createWebServer(config: Config, webRoot: string, media: MediaSer
+   return { server, authorizeUpgrade, authorizeApiUpgrade };
+ }
+ 
++/** GET/HEAD If-None-Match uses weak comparison; our generated tags contain no commas. */
++function matchesETag(header: string | undefined, etag: string): boolean {
++  if (!header) return false;
++  if (header.trim() === "*") return true;
++  const weak = `W/${etag}`;
++  return header.split(",").some((value) => {
++    const candidate = value.trim();
++    return candidate === etag || candidate === weak;
++  });
++}
++
+ /** A single `bytes=a-b` range, which is all a media element sends; anything else is served in full. */
+ function byteRange(header: string | undefined, length: number): { start: number; end: number } | "unsatisfiable" | undefined {
+   const match = header ? /^bytes=(\d*)-(\d*)$/.exec(header) : null;
 diff --git a/src/limit.ts b/src/limit.ts
 index c7143f7..59cd0c4 100644
 --- a/src/limit.ts
@@ -1295,7 +1382,7 @@ index 31fd7a2..9518ee1 100644
    const base = header(frame);
    if (!base) return { ok: false, ...(requestIdOf(frame) ? { requestId: requestIdOf(frame)! } : {}) };
 diff --git a/test/hub.test.mjs b/test/hub.test.mjs
-index e3ebc41..14d6290 100644
+index e3ebc41..86994c5 100644
 --- a/test/hub.test.mjs
 +++ b/test/hub.test.mjs
 @@ -5,6 +5,7 @@ import { createServer } from "node:net";
@@ -1306,7 +1393,115 @@ index e3ebc41..14d6290 100644
  import { createWebServer } from "../dist/http/server.js";
  import { createHub } from "../dist/ws/hub.js";
  import { ApiTokenStore } from "../dist/http/apiToken.js";
-@@ -651,6 +652,107 @@ test("opening the same chat again right away shares one LINE read-range lookup",
+@@ -346,6 +347,107 @@ test("media route serves stickers only to the browser that holds the cookie and
+   assert.equal((await fetch(`${base}sticker-123`, { method: "POST", headers: { Cookie: cookie } })).status, 405);
+ });
+ 
++test("cacheable media revalidates GET and HEAD with weak If-None-Match comparison", async (t) => {
++  const { port, cookie } = await start(t);
++  const url = `http://127.0.0.1:${port}/media/sticker-123`;
++  const initial = await fetch(url, { headers: { Cookie: cookie } });
++  const etag = initial.headers.get("etag");
++  assert.equal(await initial.text(), "png-123");
++  for (const [condition, method] of [[etag, "GET"], [`W/${etag}`, "GET"], [`"other", W/${etag}`, "GET"], ["*", "GET"], [etag, "HEAD"]]) {
++    const response = await fetch(url, { method, headers: { Cookie: cookie, "If-None-Match": condition } });
++    assert.equal(response.status, 304, `${method} ${condition}`);
++    assert.equal(response.headers.get("etag"), etag);
++    assert.equal(response.headers.get("cache-control"), "private, max-age=86400");
++    assert.equal((await response.arrayBuffer()).byteLength, 0);
++  }
++  const unmatched = await fetch(url, { headers: { Cookie: cookie, "If-None-Match": '"other"' } });
++  assert.equal(unmatched.status, 200);
++  assert.equal(await unmatched.text(), "png-123");
++});
++
++test("media validators survive cache eviction but change with the representation", async (t) => {
++  const { port, cookie, provider, media } = await start(t);
++  let content = "first image";
++  provider.fetchSticker = async () => ({ mime: "image/png", bytes: Buffer.from(content) });
++  const url = `http://127.0.0.1:${port}/media/sticker-123`;
++  const first = await fetch(url, { headers: { Cookie: cookie } });
++  const oldTag = first.headers.get("etag");
++  assert.equal(await first.text(), content);
++  media.clear();
++  const same = await fetch(url, { headers: { Cookie: cookie, "If-None-Match": oldTag } });
++  assert.equal(same.status, 304);
++  assert.equal(same.headers.get("etag"), oldTag);
++  assert.equal((await same.arrayBuffer()).byteLength, 0);
++  content = "changed image";
++  media.clear();
++  const changed = await fetch(url, { headers: { Cookie: cookie, "If-None-Match": oldTag } });
++  assert.equal(changed.status, 200);
++  assert.equal(await changed.text(), content);
++  const newTag = changed.headers.get("etag");
++  assert.notEqual(newTag, oldTag);
++  const unchanged = await fetch(url, { headers: { Cookie: cookie, "If-None-Match": newTag } });
++  assert.equal(unchanged.status, 304);
++  assert.equal((await unchanged.arrayBuffer()).byteLength, 0);
++});
++
++test("media preconditions follow authorization, existence and upstream errors", async (t) => {
++  const { port, cookie } = await start(t);
++  const base = `http://127.0.0.1:${port}/media/`;
++  for (const headers of [{}, { Cookie: `linejs_browser=${"0".repeat(64)}` }]) {
++    const response = await fetch(`${base}sticker-123`, { headers: { ...headers, "If-None-Match": "*" } });
++    assert.equal(response.status, 404);
++    assert.equal(response.headers.get("etag"), null);
++    assert.deepEqual(await response.json(), { code: "NOT_FOUND" });
++  }
++  for (const [id, status, code] of [["sticker-404", 404, "NOT_FOUND"], ["sticker-500", 502, "MEDIA_UNAVAILABLE"]]) {
++    const response = await fetch(base + id, { headers: { Cookie: cookie, "If-None-Match": "*" } });
++    assert.equal(response.status, status);
++    assert.equal(response.headers.get("etag"), null);
++    assert.deepEqual(await response.json(), { code });
++  }
++});
++
++test("cacheable media evaluates revalidation before ranges and requires strong If-Range matches", async (t) => {
++  const { port, cookie } = await start(t);
++  const url = `http://127.0.0.1:${port}/media/sticker-123`;
++  const initial = await fetch(url, { headers: { Cookie: cookie } });
++  const etag = initial.headers.get("etag");
++  const bytes = Buffer.from(await initial.arrayBuffer());
++  const part = await fetch(url, { headers: { Cookie: cookie, Range: "bytes=1-3", "If-Range": etag, "If-None-Match": '"other"' } });
++  assert.equal(part.status, 206);
++  assert.equal(part.headers.get("etag"), etag);
++  assert.equal(part.headers.get("content-range"), `bytes 1-3/${bytes.length}`);
++  assert.deepEqual(Buffer.from(await part.arrayBuffer()), bytes.subarray(1, 4));
++  for (const condition of ['"stale"', `W/${etag}`, "Wed, 21 Oct 2015 07:28:00 GMT"]) {
++    const full = await fetch(url, { headers: { Cookie: cookie, Range: "bytes=999-", "If-Range": condition } });
++    assert.equal(full.status, 200, condition);
++    assert.equal(full.headers.get("content-range"), null);
++    assert.deepEqual(Buffer.from(await full.arrayBuffer()), bytes);
++  }
++  const invalid = await fetch(url, { headers: { Cookie: cookie, Range: "bytes=999-", "If-Range": etag } });
++  assert.equal(invalid.status, 416);
++  assert.equal(invalid.headers.get("content-range"), `bytes */${bytes.length}`);
++  await invalid.arrayBuffer();
++  const unchanged = await fetch(url, { headers: { Cookie: cookie, Range: "bytes=999-", "If-None-Match": etag } });
++  assert.equal(unchanged.status, 304);
++  assert.equal(unchanged.headers.get("content-range"), null);
++  assert.equal((await unchanged.arrayBuffer()).byteLength, 0);
++});
++
++test("private message media and files do not expose validators or produce cached responses", async (t) => {
++  const { port, cookie } = await start(t);
++  for (const id of ["msg-100", "file-123"]) {
++    const url = `http://127.0.0.1:${port}/media/${id}`;
++    const first = await fetch(url, { headers: { Cookie: cookie } });
++    const bytes = Buffer.from(await first.arrayBuffer());
++    const response = await fetch(url, { headers: { Cookie: cookie, "If-None-Match": "*" } });
++    assert.equal(response.status, 200);
++    assert.equal(response.headers.get("etag"), null);
++    assert.equal(response.headers.get("cache-control"), "private, no-store");
++    assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes);
++  }
++});
++
+ async function signedIn(t, options) {
+   const env = await start(t, options);
+   await env.login.restore();
+@@ -651,6 +753,107 @@ test("opening the same chat again right away shares one LINE read-range lookup",
    assert.equal(env.provider.calls.filter(([kind]) => kind === "read-range").length, 1);
  });
  
@@ -1414,7 +1609,7 @@ index e3ebc41..14d6290 100644
  test("live read events reach the browser only for chats the account has", async (t) => {
    const env = await signedIn(t);
    env.hub.handleRead(`c${"b".repeat(32)}`, { readerId: "u1", messageId: "5" });
-@@ -920,6 +1022,38 @@ test("read positions seen live are replayed on the next open, merged with LINE's
+@@ -920,6 +1123,38 @@ test("read positions seen live are replayed on the next open, merged with LINE's
    await env.client.until(() => env.client.frames.filter((frame) => frame.type === "read" && frame.positions.length === 3).length === 2);
  });
  
@@ -1453,7 +1648,7 @@ index e3ebc41..14d6290 100644
  test("an open chat is reported read once per position, only for messages the server has shown", async (t) => {
    const env = await signedIn(t);
    env.provider.history = { messages: [older("1001", 10), older("1002", 20), older("1003", 30)], hasMore: false };
-@@ -1571,3 +1705,376 @@ test("a connection that stops answering pings is closed by the next heartbeat; o
+@@ -1571,3 +1806,376 @@ test("a connection that stops answering pings is closed by the next heartbeat; o
    assert.equal(healthy.socket.readyState, WebSocket.OPEN);
    assert.equal(pings, 2);
  });
