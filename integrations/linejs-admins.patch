@@ -19,16 +19,18 @@ index 59cf16e..62bd32b 100644
  內部日誌也不得包含憑證、token、QR URL、PIN 或 key material；不得直接 dump 套件錯誤物件、session 或登入 payload。圖片／貼圖／影片／語音位元組一律走 HTTP，WS 不傳位元組；收到的檔案只以 `file-<id>` 附件下載（`Content-Disposition: attachment`、`application/octet-stream`，不嗅探、不內嵌），規則同收到的媒體。訊息不落盤；每頻道最多 500 則，同 messageId 去重，編輯覆寫快取。LINE listen 失效採退避重啟；QR 失敗不自動循環，須由使用者動作重新產生。
  
 diff --git a/PLAN.md b/PLAN.md
-index 49acd5b..ce2c2cf 100644
+index 49acd5b..46150d7 100644
 --- a/PLAN.md
 +++ b/PLAN.md
-@@ -144,23 +144,36 @@
+@@ -144,23 +144,38 @@
  
  > 實作補完（協定版本仍為 2）：登出／換帳號以 session generation 作廢歷史、發送、回應、收回、已讀與頻道查詢的舊結果；歷史重新載入也同步清除已取消的回應。OpenChat 歷史採同聊天室 single-flight、時間＋訊息 id 錨點，快取最多 5 個聊天室各 5000 則、10 分鐘，合併即時訊息與狀態，過期時重新取得回應，僅已提供頁面的訊息授權媒體。網頁搜尋維持即時更新並跨聊天室依時間排序；初次歷史失敗可重試，回應更新不重建媒體 DOM，登出清除搜尋、私人畫面與通知。隔離測試與無頭靜音瀏覽器已驗證；尚未對本次變動重新進行真實 LINE Gate 驗收。
  
 +> 歷史排序補正：既有 OpenChat 訊息被替換時檢查前後相鄰順序，必要時重新排序，維持時間＋訊息 id 的分頁不變量；一般依序追加不重排整份快取。已以實際 Provider、WebSocket 與回歸測試驗證時間向前／向後修正，不涉及真實 LINE 帳號。
 +
 +> 歷史分頁定位：游標只解析及建構一次，以已排序快取進行二分查找，保留排他邊界與缺失錨點語意。已以實際 Provider 比較 100／1000／5000 則快取的完整分頁內容，並經真實 WebSocket 驗證同時間不同長度 id、精確／缺失／視窗外游標；前後回應一致。回歸測試另涵蓋空歷史與不合法游標，234 項測試通過；未使用真實 LINE 帳號。
++
++> 歷史快取計時：10 分鐘有效期改以單調時鐘計算，仍從載入完成起算；系統時鐘快轉不觸發多餘 LINE 查詢，倒退也不延長過期資料的壽命。實際 Provider＋WebSocket fixture 驗證校時前後的查詢次數與回應狀態更新，回歸測試覆蓋到期前及精確到期；235 項測試通過，未連接真實 LINE。
 +
  > v1.15（小語裁示：JEV 詐騙分析，協定版本仍為 2）：`config.yaml` 新增選用區段 `jev`（`token`：TypeSafe API 金鑰，有值才啟用；`model`：預設 `jev-1.13.0`）。新增 Server → Client `scam:state`（`{ enabled }`，連線即送、只給網頁，不含金鑰）與 `scam:result`（`{ requestId, chatId, messageId, analysis: { probability, tactic?: { kind, confidence } } }`，只送給要求的連線），Client → Server `scam:check`（`{ requestId, chatId, messageId }`，僅網頁、每連線每分鐘 10 次）。伺服器只接受已顯示、非本帳號、未收回、已解密、非系統訊息的文字訊息，以自己快取的文字經 `src/jev/` 呼叫 `POST https://api.typesafe.ai/v1/systemone`（Noul 題問是否為詐騙、Choice 題問最接近的手法；題目用英文，因官方說明英文準確度最佳），回應 fail-closed；未設定金鑰回 `SCAM_CHECK_UNAVAILABLE`，失敗回 `SCAM_CHECK_FAILED`。網頁對別人的文字訊息右鍵出現「詐騙機率分析」，以官方範例門檻分級（> 0.8 高度疑似、≤ 0.2 不太像、其間無法確定）並註明為模型估計、文字已送至 TypeSafe。尚未以有效金鑰實測真實分析結果。
  
@@ -60,7 +62,7 @@ index 49acd5b..ce2c2cf 100644
  | `channels` | `{ channels: Channel[] }`（snapshot，連線即送、變動重送） |
  | `messages` | `{ chatId, messages: Message[] }`（連線時快照，每個聊天室一個影格；舊訊息，不計未讀） |
  | `message` | `{ message: Message }`（即時新訊息） |
-@@ -190,6 +203,7 @@
+@@ -190,6 +205,7 @@
  | `message:react` | `{ requestId, chatId, messageId, reaction: "NICE"｜"LOVE"｜"FUN"｜"AMAZING"｜"SAD"｜"OMG"｜null }`（僅網頁，與 `message:send` 共用頻率上限） |
  | `scam:check` | `{ requestId, chatId, messageId }`（網頁每連線每分鐘 10 次；機器人限 `api.chats`、所有機器人合計每分鐘 10 次；只接受別人傳來、已顯示、未收回的文字訊息） |
  | `profile:get` | `{ requestId }`（自己的 `profile`；網頁與機器人皆可，不呼叫 LINE） |
@@ -68,7 +70,7 @@ index 49acd5b..ce2c2cf 100644
  | `channels:refresh` | `{}` |
  | `api:token:create` / `api:token:revoke` | `{}`（產生或撤銷機器人 Token，並中斷所有機器人連線） |
  | `ping` | `{}` |
-@@ -197,7 +211,7 @@
+@@ -197,7 +213,7 @@
  ### 機器人 API（`/api/ws`）
  - 升級條件：`api.enabled`、**無 `Origin`**、`Authorization: Bearer linejs_…` 符合目前 Token；否則 403（同時超過 4 個連線回 429）。`Host` 不限制（同網頁）。
  - 連線時收到 `hello`、`auth:state`、`status`、`auth:ready`、僅含 `api.chats` 的 `channels`；之後只有這些聊天室的 `message`／`message:edit`。不重播、不給 `read`／`update:available`／`api:state`。
@@ -78,7 +80,7 @@ index 49acd5b..ce2c2cf 100644
  
  ### HTTP
 diff --git a/README.en.md b/README.en.md
-index 6b97c31..6e4f350 100644
+index 6b97c31..406ee62 100644
 --- a/README.en.md
 +++ b/README.en.md
 @@ -26,7 +26,9 @@ flowchart LR
@@ -86,7 +88,7 @@ index 6b97c31..6e4f350 100644
  The backend binds only to `127.0.0.1` by default (configurable in `config.yaml`; see “Configuration”), on port `3789` by default. The backend builds with `tsc` into `dist/`; the frontend builds with Vite into `dist/web/`. Messages are stored only in memory (up to 500 per channel, deduplicated by id, with edits overwriting existing messages), without a database. Stickers, profile pictures, and received media are cached by the backend in an LRU cache (200MB by default) and served over HTTP on the same port.
  
 -The OpenChat adapter additionally keeps a 10-minute in-memory history cache, bounded to 5 chats with 5000 messages each. Concurrent queries for one chat share one history walk, pagination anchors use message time and id, and live messages, take-backs, and reactions are merged. An expired cache reloads reaction state; media downloads are authorized only after the message's page has been delivered. Logging out or changing accounts invalidates pending queries so old-account results cannot enter the next account.
-+The OpenChat adapter additionally keeps a 10-minute in-memory history cache, bounded to 5 chats with 5000 messages each. Concurrent queries for one chat share one history walk, pagination anchors use message time and id, and live messages, take-backs, and reactions are merged. Replacing an existing message also preserves time-and-id order; ordinary in-order appends do not re-sort the entire cache. An expired cache reloads reaction state; media downloads are authorized only after the message's page has been delivered. Logging out or changing accounts invalidates pending queries so old-account results cannot enter the next account.
++The OpenChat adapter additionally keeps a 10-minute in-memory history cache, bounded to 5 chats with 5000 messages each. Expiration uses a monotonic clock, unaffected by wall-clock corrections. Concurrent queries for one chat share one history walk, pagination anchors use message time and id, and live messages, take-backs, and reactions are merged. Replacing an existing message also preserves time-and-id order; ordinary in-order appends do not re-sort the entire cache. An expired cache reloads reaction state; media downloads are authorized only after the message's page has been delivered. Logging out or changing accounts invalidates pending queries so old-account results cannot enter the next account.
 +
 +Cached history uses binary search to locate cursor boundaries instead of scanning the entire message list. An anchor no longer present in the retained window still selects older messages using the same time/id boundary.
  
@@ -122,7 +124,7 @@ index 6b97c31..6e4f350 100644
  
  ```js
 diff --git a/README.ja.md b/README.ja.md
-index a6e80b5..be68d91 100644
+index a6e80b5..ebbc96a 100644
 --- a/README.ja.md
 +++ b/README.ja.md
 @@ -26,7 +26,9 @@ flowchart LR
@@ -130,7 +132,7 @@ index a6e80b5..be68d91 100644
  バックエンドは既定で `127.0.0.1` のみにバインドします（`config.yaml` で変更できます。「設定」を参照）。既定のポートは `3789` です。バックエンドは `tsc` で `dist/` に、フロントエンドは Vite で `dist/web/` にビルドします。メッセージはメモリにのみ保存し（チャンネルごとに最大 500 件、同じ id は重複排除、編集は上書き）、データベースは使用しません。スタンプ、プロフィール画像、受信したメディアはバックエンドの LRU キャッシュ（既定 200MB）を経由し、同じポートの HTTP で配信します。
  
 -OpenChat adapter は別途、10 分間のメモリ内履歴キャッシュを保持します（最大 5 チャット、各 5000 件）。同じチャットへの並行クエリは履歴走査を共有し、メッセージの時刻と id をページ取得の基準にして、リアルタイムメッセージ、送信取消、リアクションを統合します。期限切れ時はリアクションの状態を再取得し、メディアは該当ページを提供してからダウンロードを許可します。ログアウトやアカウント変更で未完了のクエリを無効にし、以前のアカウントの結果が次のアカウントに混入することを防ぎます。
-+OpenChat adapter は別途、10 分間のメモリ内履歴キャッシュを保持します（最大 5 チャット、各 5000 件）。同じチャットへの並行クエリは履歴走査を共有し、メッセージの時刻と id をページ取得の基準にして、リアルタイムメッセージ、送信取消、リアクションを統合します。既存メッセージの置換時も時刻と id の順序を維持し、通常の順序どおりの追加ではキャッシュ全体を再ソートしません。期限切れ時はリアクションの状態を再取得し、メディアは該当ページを提供してからダウンロードを許可します。ログアウトやアカウント変更で未完了のクエリを無効にし、以前のアカウントの結果が次のアカウントに混入することを防ぎます。
++OpenChat adapter は別途、10 分間のメモリ内履歴キャッシュを保持します（最大 5 チャット、各 5000 件）。有効期限は単調時計で測り、システム時刻の補正には影響されません。同じチャットへの並行クエリは履歴走査を共有し、メッセージの時刻と id をページ取得の基準にして、リアルタイムメッセージ、送信取消、リアクションを統合します。既存メッセージの置換時も時刻と id の順序を維持し、通常の順序どおりの追加ではキャッシュ全体を再ソートしません。期限切れ時はリアクションの状態を再取得し、メディアは該当ページを提供してからダウンロードを許可します。ログアウトやアカウント変更で未完了のクエリを無効にし、以前のアカウントの結果が次のアカウントに混入することを防ぎます。
 +
 +キャッシュ済み履歴のカーソル境界は、メッセージ全体の線形走査ではなく二分探索で特定します。基準のメッセージが保持範囲から外れていても、同じ時刻／id の境界で古いページを取得します。
  
@@ -166,7 +168,7 @@ index a6e80b5..be68d91 100644
  
  ```js
 diff --git a/README.md b/README.md
-index 7704eb9..e7b8565 100644
+index 7704eb9..d478c62 100644
 --- a/README.md
 +++ b/README.md
 @@ -26,7 +26,9 @@ flowchart LR
@@ -174,7 +176,7 @@ index 7704eb9..e7b8565 100644
  後端預設只綁定 `127.0.0.1`（可在 `config.yaml` 改，見〈設定〉），預設埠 `3789`。後端 `tsc` 建置至 `dist/`；前端 Vite 建置至 `dist/web/`。訊息只存記憶體（每頻道最多 500 則，同 id 去重，編輯覆寫），不使用資料庫；貼圖、大頭照與收到的媒體經後端以 LRU（預設 200MB）快取後由同埠 HTTP 提供。
  
 -OpenChat adapter 另有 10 分鐘的記憶體歷史快取，最多 5 個聊天室、各 5000 則；同聊天室的併發查詢共用一次歷史遍歷，以訊息時間與 id 為分頁錨點，並合併即時訊息、收回與回應。過期重新取得時重讀回應狀態；媒體只在訊息所在頁面已提供後才授權下載。登出或切換帳號會作廢尚未完成的查詢，避免舊帳號結果流入新帳號。
-+OpenChat adapter 另有 10 分鐘的記憶體歷史快取，最多 5 個聊天室、各 5000 則；同聊天室的併發查詢共用一次歷史遍歷，以訊息時間與 id 為分頁錨點，並合併即時訊息、收回與回應。既有訊息被替換時亦維持時間與 id 排序；一般依序追加不重排整份快取。過期重新取得時重讀回應狀態；媒體只在訊息所在頁面已提供後才授權下載。登出或切換帳號會作廢尚未完成的查詢，避免舊帳號結果流入新帳號。
++OpenChat adapter 另有 10 分鐘的記憶體歷史快取，以單調時鐘計算有效期，不受系統校時影響；最多 5 個聊天室、各 5000 則。同聊天室的併發查詢共用一次歷史遍歷，以訊息時間與 id 為分頁錨點，並合併即時訊息、收回與回應。既有訊息被替換時亦維持時間與 id 排序；一般依序追加不重排整份快取。過期重新取得時重讀回應狀態；媒體只在訊息所在頁面已提供後才授權下載。登出或切換帳號會作廢尚未完成的查詢，避免舊帳號結果流入新帳號。
 +
 +快取歷史的游標邊界以二分查找定位，不逐筆掃描整份訊息清單；即使錨點已不在保留視窗內，仍依相同的時間／id 邊界取得較舊頁面。
  
@@ -261,7 +263,7 @@ index c7143f7..59cd0c4 100644
      if (this.events.length >= this.max) return false;
      this.events.push(now);
 diff --git a/src/line/provider.ts b/src/line/provider.ts
-index 58f8902..4df6c7c 100644
+index 58f8902..6a9e43a 100644
 --- a/src/line/provider.ts
 +++ b/src/line/provider.ts
 @@ -3,7 +3,7 @@ import { BaseClient, type Device, type FetchLike } from "@evex/linejs/base";
@@ -369,6 +371,26 @@ index 58f8902..4df6c7c 100644
      }
      const start = Math.max(0, end - limit);
      const messages = all.slice(start, end);
+@@ -735,8 +797,8 @@ export class EvexLineProvider implements LineProvider {
+   private async loadSquareMessages(client: Client, squareChatMid: string): Promise<Message[]> {
+     const cached = this.squareCache.get(squareChatMid);
+     if (cached?.loading) return cached.loading;
+-    if (cached && Date.now() - cached.at < SQUARE_CACHE_MS) return cached.messages;
+-    const entry: SquareHistory = { at: 0, messages: [], origins: new Map(), updates: new Map(), liveUpdates: new Set() };
++    if (cached && performance.now() - cached.at < SQUARE_CACHE_MS) return cached.messages;
++    const entry: SquareHistory = { at: -Infinity, messages: [], origins: new Map(), updates: new Map(), liveUpdates: new Set() };
+     // Take-backs are permanent; reaction snapshots are not. Only events arriving during this
+     // walk override its history statuses, otherwise an expired live snapshot would win forever.
+     if (cached) for (const [id, update] of cached.updates) {
+@@ -801,7 +863,7 @@ export class EvexLineProvider implements LineProvider {
+     entry.messages.sort((a, b) => this.compareSquareMessages(a, b));
+     for (const [id, update] of entry.updates) this.applySquareUpdate(entry, id, update);
+     this.boundSquareHistory(entry);
+-    entry.at = Date.now();
++    entry.at = performance.now();
+     return entry.messages;
+   }
+ 
 @@ -850,10 +912,14 @@ export class EvexLineProvider implements LineProvider {
    private rememberSquareMessage(message: Message): void {
      const cached = this.squareCache.get(message.channelId);
@@ -1113,13 +1135,63 @@ index e3ebc41..15e88f1 100644
 +  }
 +});
 diff --git a/test/provider.test.mjs b/test/provider.test.mjs
-index 3dae4b2..9fbc581 100644
+index 3dae4b2..c0e1d34 100644
 --- a/test/provider.test.mjs
 +++ b/test/provider.test.mjs
-@@ -524,6 +524,56 @@ test("OpenChat paging survives an earlier live delivery and cache refresh; chats
+@@ -501,7 +501,9 @@ test("OpenChat concurrent history shares the walk and retains interleaved live d
+   assert.equal(await provider.fetchMessageMedia("11"), undefined);
+ });
+ 
+-test("OpenChat paging survives an earlier live delivery and cache refresh; chats stay isolated", async () => {
++test("OpenChat paging survives an earlier live delivery and cache refresh; chats stay isolated", async (t) => {
++  let elapsed = 0;
++  t.mock.method(performance, "now", () => elapsed);
+   let walks = 0;
+   const other = "m" + "t".repeat(32);
+   const base = fakeBase({ square: {
+@@ -518,12 +520,94 @@ test("OpenChat paging survives an earlier live delivery and cache refresh; chats
+   await settle();
+   const older = await provider.fetchHistory(channel, 2, newest.cursor);
+   assert.deepEqual(older.messages.map((message) => message.messageId), ["1", "2"]);
+-  provider.squareCache.get(SQUARE).at = 0;
++  elapsed += 600_000;
+   assert.deepEqual((await provider.fetchHistory(channel, 2, newest.cursor)).messages.map((message) => message.messageId), ["1", "2"]);
+   assert.ok((await provider.fetchHistory({ channelId: other, kind: "square" }, 50)).messages.every((message) => message.channelId === other));
    assert.equal(walks, 3);
  });
  
++test("OpenChat history expires by elapsed time despite wall-clock corrections", async (t) => {
++  const clock = { elapsed: 0, wall: Date.now() };
++  t.mock.method(performance, "now", () => clock.elapsed);
++  t.mock.method(Date, "now", () => clock.wall);
++  let revision = 1, walks = 0;
++  const base = fakeBase({ square: {
++    async fetchSquareChatEvents() {
++      walks += 1;
++      const event = squareEvent(1);
++      event.payload.receiveMessage.messageReactionStatus = { 1: revision, 2: { 3: revision } };
++      return { events: [event] };
++    },
++    async getSquareMember() { return { squareMember: { displayName: "成員" } }; },
++  } });
++  const { provider } = await activeProvider(base);
++  const channel = { channelId: SQUARE, kind: "square" };
++  const reactions = async () => (await provider.fetchHistory(channel, 50)).messages[0].reactions;
++  assert.deepEqual(await reactions(), { counts: { LOVE: 1 } });
++  revision = 2;
++  clock.wall += 600_001;
++  assert.deepEqual(await reactions(), { counts: { LOVE: 1 } });
++  assert.equal(walks, 1);
++  revision = 3;
++  clock.wall -= 1_200_002;
++  clock.elapsed = 599_999;
++  assert.deepEqual(await reactions(), { counts: { LOVE: 1 } });
++  assert.equal(walks, 1);
++  clock.elapsed = 600_000;
++  assert.deepEqual(await reactions(), { counts: { LOVE: 3 } });
++  assert.equal(walks, 2);
++});
++
 +test("OpenChat cursor boundaries handle equal timestamps, missing anchors and empty history", async () => {
 +  const events = [100, 2, 10, 9].map((id) => {
 +    const event = squareEvent(id);
@@ -1173,7 +1245,47 @@ index 3dae4b2..9fbc581 100644
  test("OpenChat walks deduplicate events, consume retained mutations, and authorize media only on the displayed page", async () => {
    const base = fakeBase({ square: {
      async fetchSquareChatEvents() {
-@@ -650,3 +700,78 @@ test("OpenChat TTL refresh replaces old live reactions with current history whil
+@@ -565,7 +649,9 @@ test("OpenChat an invalidated in-flight walk cannot refill history or media afte
+   assert.equal(provider.mediaOrigins.size, 0);
+ });
+ 
+-test("OpenChat own reaction changes and take-backs remain correct on the next cached and refreshed history", async () => {
++test("OpenChat own reaction changes and take-backs remain correct on the next cached and refreshed history", async (t) => {
++  let elapsed = 0;
++  t.mock.method(performance, "now", () => elapsed);
+   const base = fakeBase({ square: {
+     async fetchSquareChatEvents() { return { events: [squareEvent(1), squareEvent(2, SQUARE, "IMAGE")] }; },
+     async getSquareMember() { return { squareMember: { displayName: "成員" } }; },
+@@ -580,7 +666,7 @@ test("OpenChat own reaction changes and take-backs remain correct on the next ca
+   assert.deepEqual((await provider.fetchHistory(channel, 50)).messages[0].reactions, { counts: { LOVE: 1 }, mine: "LOVE" });
+   await provider.react(channel, "1", undefined);
+   await provider.unsendMessage(channel, "2");
+-  provider.squareCache.get(SQUARE).at = 0;
++  elapsed += 600_000;
+   const page = await provider.fetchHistory(channel, 50);
+   assert.equal(page.messages[0].reactions, undefined);
+   assert.equal(page.messages[1].unsent, true);
+@@ -621,7 +707,9 @@ test("OpenChat live history remains bounded without shifting message-anchored cu
+   assert.deepEqual((await provider.fetchHistory(channel, 2, latest.cursor)).messages.map((message) => message.messageId), ["5007", "5008"]);
+ });
+ 
+-test("OpenChat TTL refresh replaces old live reactions with current history while protecting events during the refresh", async () => {
++test("OpenChat TTL refresh replaces old live reactions with current history while protecting events during the refresh", async (t) => {
++  let elapsed = 0;
++  t.mock.method(performance, "now", () => elapsed);
+   let refreshed = false;
+   let release;
+   const gate = new Promise((resolve) => { release = resolve; });
+@@ -641,7 +729,7 @@ test("OpenChat TTL refresh replaces old live reactions with current history whil
+   await provider.fetchHistory(channel, 50);
+   emit("square:event", squareStatus(1, { 1: 2, 2: { 3: 2 } }));
+   emit("square:event", squareStatus(2, { 1: 1, 2: { 3: 1 } }));
+-  provider.squareCache.get(SQUARE).at = 0;
++  elapsed += 600_000;
+   refreshed = true;
+   const refreshing = provider.fetchHistory(channel, 50);
+   emit("square:event", squareStatus(2, { 1: 0, 2: {} }));
+@@ -650,3 +738,78 @@ test("OpenChat TTL refresh replaces old live reactions with current history whil
    assert.deepEqual(page.messages[0].reactions, { counts: { LOVE: 3 } }, "history replaces reactions from before this refresh");
    assert.equal(page.messages[1].reactions, undefined, "live removal during refresh still overrides the walked snapshot");
  });
