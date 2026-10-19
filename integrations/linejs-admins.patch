@@ -38,10 +38,10 @@ index 59cf16e..6cfe74d 100644
  
  LINE operation 與連線注意事項：linejs 未記載多數 operation 的參數排列，`SEND_CHAT_CHECKED`（手機已讀）只取 `param1` 且須為伺服器已知聊天室；群組／個人資料／聊天室成員變動不解析參數，只觸發節流的頻道清單重新整理（3 秒合併、最多每 30 秒一次），不得改成依參數猜測內容。頻道清單的最後一則訊息（`Channel.lastMessage`）是預覽，不登記媒體來源，不能藉此下載。WS 心跳：伺服器以協定層 Ping 每 30 秒檢查、兩輪無回應即關閉；網頁 `ping` 需 10 秒內收到 `pong`，回到前景立即探測。斷線記錄（網頁主控台、服務日誌 `WS_CLOSED`）只可含時間、close code、截短的 reason 與前後景狀態，不得含標頭、cookie 或 Token。
 diff --git a/PLAN.md b/PLAN.md
-index 49acd5b..791f2f9 100644
+index 49acd5b..2764237 100644
 --- a/PLAN.md
 +++ b/PLAN.md
-@@ -144,23 +144,76 @@
+@@ -144,23 +144,78 @@
  
  > 實作補完（協定版本仍為 2）：登出／換帳號以 session generation 作廢歷史、發送、回應、收回、已讀與頻道查詢的舊結果；歷史重新載入也同步清除已取消的回應。OpenChat 歷史採同聊天室 single-flight、時間＋訊息 id 錨點，快取最多 5 個聊天室各 5000 則、10 分鐘，合併即時訊息與狀態，過期時重新取得回應，僅已提供頁面的訊息授權媒體。網頁搜尋維持即時更新並跨聊天室依時間排序；初次歷史失敗可重試，回應更新不重建媒體 DOM，登出清除搜尋、私人畫面與通知。隔離測試與無頭靜音瀏覽器已驗證；尚未對本次變動重新進行真實 LINE Gate 驗收。
  
@@ -89,6 +89,8 @@ index 49acd5b..791f2f9 100644
 +
 +> 頻道與好友清單載入的登入隔離：在好友 ID／批次、聊天清單、訊息匣分頁、OpenChat 摘要及預覽等待後確認仍屬於目前帳號，失效後停止後續工作並拒絕舊結果，避免舊暱稱污染新訊息。實際 Provider＋Hub＋WebSocket 在十種等待／失敗情境換帳號，驗證不再追加 SDK 呼叫、新帳號頻道與即時訊息名稱正確；已送出的要求仍可能完成。原有好友百人批次／三批並行、OpenChat 五並行與目前帳號的摘要失敗降級保留。前後端型別檢查、建置與 314 項測試通過，未連接真實 LINE。
 +
++> 可見頻道摘要的工作範圍：未列出的 talk 訊息匣保留分頁游標與去重作用，但不解密或補查寄件者，避免擠掉可見摘要的百人成員查詢額度；沒有 talk 頻道時不呼叫訊息匣 API，OpenChat 摘要保留。實際 Provider＋Hub＋WebSocket 以兩百個未列出訊息匣驗證已載入／尚待補查寄件者、僅 OpenChat 及空清單：三種對照的完整快照不變，另一種只將通用寄件者名稱改為查得名稱。回歸涵蓋沒有可見資料的中間頁、重複未列出頁，以及群組、房間、好友和 OpenChat 的未讀與摘要。前後端型別檢查、建置與 318 項測試通過，未連接真實 LINE。
++
  > v1.15（小語裁示：JEV 詐騙分析，協定版本仍為 2）：`config.yaml` 新增選用區段 `jev`（`token`：TypeSafe API 金鑰，有值才啟用；`model`：預設 `jev-1.13.0`）。新增 Server → Client `scam:state`（`{ enabled }`，連線即送、只給網頁，不含金鑰）與 `scam:result`（`{ requestId, chatId, messageId, analysis: { probability, tactic?: { kind, confidence } } }`，只送給要求的連線），Client → Server `scam:check`（`{ requestId, chatId, messageId }`，僅網頁、每連線每分鐘 10 次）。伺服器只接受已顯示、非本帳號、未收回、已解密、非系統訊息的文字訊息，以自己快取的文字經 `src/jev/` 呼叫 `POST https://api.typesafe.ai/v1/systemone`（Noul 題問是否為詐騙、Choice 題問最接近的手法；題目用英文，因官方說明英文準確度最佳），回應 fail-closed；未設定金鑰回 `SCAM_CHECK_UNAVAILABLE`，失敗回 `SCAM_CHECK_FAILED`。網頁對別人的文字訊息右鍵出現「詐騙機率分析」，以官方範例門檻分級（> 0.8 高度疑似、≤ 0.2 不太像、其間無法確定）並註明為模型估計、文字已送至 TypeSafe。尚未以有效金鑰實測真實分析結果。
  
  > v1.16（小語裁示：JEV 開放給機器人 API，協定版本仍為 2；MCP 入口裁示不做）：機器人連線新增 `scam:check`（`{ requestId, chatId, messageId }`），規則同網頁——只接受伺服器已顯示、非本帳號、未收回、已解密、非系統訊息的文字訊息，送伺服器快取的文字——另限 `api.chats` 內的聊天室（其餘 `UNKNOWN_CHAT`），所有機器人連線合計每分鐘 10 次（與網頁各連線的額度分開）；成功回 `scam:result`，未設定金鑰回 `SCAM_CHECK_UNAVAILABLE`。機器人不收 `scam:state`。不接受機器人傳任意文字。
@@ -119,7 +121,7 @@ index 49acd5b..791f2f9 100644
  | `channels` | `{ channels: Channel[] }`（snapshot，連線即送、變動重送） |
  | `messages` | `{ chatId, messages: Message[] }`（連線時快照，每個聊天室一個影格；舊訊息，不計未讀） |
  | `message` | `{ message: Message }`（即時新訊息） |
-@@ -190,6 +243,7 @@
+@@ -190,6 +245,7 @@
  | `message:react` | `{ requestId, chatId, messageId, reaction: "NICE"｜"LOVE"｜"FUN"｜"AMAZING"｜"SAD"｜"OMG"｜null }`（僅網頁，與 `message:send` 共用頻率上限） |
  | `scam:check` | `{ requestId, chatId, messageId }`（網頁每連線每分鐘 10 次；機器人限 `api.chats`、所有機器人合計每分鐘 10 次；只接受別人傳來、已顯示、未收回的文字訊息） |
  | `profile:get` | `{ requestId }`（自己的 `profile`；網頁與機器人皆可，不呼叫 LINE） |
@@ -127,7 +129,7 @@ index 49acd5b..791f2f9 100644
  | `channels:refresh` | `{}` |
  | `api:token:create` / `api:token:revoke` | `{}`（產生或撤銷機器人 Token，並中斷所有機器人連線） |
  | `ping` | `{}` |
-@@ -197,7 +251,7 @@
+@@ -197,7 +253,7 @@
  ### 機器人 API（`/api/ws`）
  - 升級條件：`api.enabled`、**無 `Origin`**、`Authorization: Bearer linejs_…` 符合目前 Token；否則 403（同時超過 4 個連線回 429）。`Host` 不限制（同網頁）。
  - 連線時收到 `hello`、`auth:state`、`status`、`auth:ready`、僅含 `api.chats` 的 `channels`；之後只有這些聊天室的 `message`／`message:edit`。不重播、不給 `read`／`update:available`／`api:state`。
@@ -137,7 +139,7 @@ index 49acd5b..791f2f9 100644
  
  ### HTTP
 diff --git a/README.en.md b/README.en.md
-index 6b97c31..851a3f4 100644
+index 6b97c31..e896928 100644
 --- a/README.en.md
 +++ b/README.en.md
 @@ -26,7 +26,27 @@ flowchart LR
@@ -169,7 +171,7 @@ index 6b97c31..851a3f4 100644
  
  ## Requirements
  
-@@ -71,6 +91,10 @@ Open `http://127.0.0.1:3789`. If `session.json` can be reused, you enter the cha
+@@ -71,6 +91,12 @@ Open `http://127.0.0.1:3789`. If `session.json` can be reused, you enter the cha
  
  The app can be installed as a PWA (the browser's 「安裝」 (Install) action; favicon and manifest included). The service worker caches only public static files, never `/media/*` or `/ws`; pages always use a network-first strategy. The web interface disables the browser's native context menu except in input fields, replacing it with a message menu (you can take back your own messages there; touch long-press works too. Right-clicking a chat in the list shows and copies its channel ID, and right-clicking your own name at the top left shows and copies your own ID); this is a convenience, not a security mechanism. Unread counts in the chat list come from LINE and are cleared after opening a chat and sending a read receipt; reading a chat on another device such as your phone (LINE's `SEND_CHAT_CHECKED`) also clears it at once. When a group is renamed or changes its picture, members join or leave, or a friend changes name or profile picture, the service fetches the channel list from LINE again (once per burst of changes, and at most once every 30 seconds).
  
@@ -177,10 +179,12 @@ index 6b97c31..851a3f4 100644
 +
 +Channel and friend-list loads belong to the current login: after an account change, obsolete work stops further friend batches, message-box pages and OpenChat summary queries, and cannot carry old names or previews into the next account. Already-issued requests may still complete. Friend batches retain their 100-person limit and three-batch concurrency; OpenChat summaries retain five concurrent queries. Summary failures for the current account still leave its channels available.
 +
++Summaries process only chats in the current channel list. Unlisted message boxes still advance pagination and participate in repeated-page detection, but their previews are neither decrypted nor used for sender lookups, preserving the hundred-member lookup budget for displayed summaries. Lists without talk chats skip the talk message-box API; OpenChat summaries are still fetched.
++
  Right-click a chat message (long-press on touch screens) and choose 「顯示寄件者 ID」 to view and copy another person's ID. Bots read `message.senderId` in live `message`/`message:edit` frames, or `messages[].senderId` in `history`, still restricted to `api.chats`. OpenChat returns the OpenChat member ID, not the ordinary LINE account ID; this feature does not look up members who have not appeared in messages.
  
  `session.json` contains credentials and E2EE key material. It must be saved with permissions `600` and must not be shared or committed. `config.yaml` contains personal configuration and is excluded from version control. `api-token.json` (the bot Token's SHA-256 and creation time, permissions `600`) and `linejs.pid` (the running service's PID, used by `stop`/`restart`) are also excluded from version control.
-@@ -164,18 +188,25 @@ Lets your own programs (bots) send and receive messages. **Disabled by default**
+@@ -164,18 +190,25 @@ Lets your own programs (bots) send and receive messages. **Disabled by default**
  | Bot → Service | `history:fetch` | `{ requestId, chatId, limit?, before? }`: the same pagination as the web interface, without a read-receipt snapshot |
  | Bot → Service | `scam:check` | `{ requestId, chatId, messageId }`: check with Jev a text message **from someone else** in `api.chats` that the service has shown (received live or returned by `history:fetch`); the server sends its own cached text. Requires `jev.token` (otherwise `SCAM_CHECK_UNAVAILABLE`); 10 per minute across all bots, each billed by TypeSafe. Success returns `scam:result { requestId, chatId, messageId, analysis: { probability, tactic? } }` |
  | Bot → Service | `profile:get` | `{ requestId }`: get your own ID and name at any time; returns `profile { requestId, profile: { userId, displayName, pictureId? } }` (the same as `auth:ready`; no LINE request; shares the 10-per-second-per-connection budget with `history:fetch`; returns `INVALID_REQUEST` when not signed in) |
@@ -210,7 +214,7 @@ index 6b97c31..851a3f4 100644
  
  ```js
 diff --git a/README.ja.md b/README.ja.md
-index a6e80b5..f3df87e 100644
+index a6e80b5..a2b6ef2 100644
 --- a/README.ja.md
 +++ b/README.ja.md
 @@ -26,7 +26,27 @@ flowchart LR
@@ -242,7 +246,7 @@ index a6e80b5..f3df87e 100644
  
  ## 動作要件
  
-@@ -71,6 +91,10 @@ npm start
+@@ -71,6 +91,12 @@ npm start
  
  PWA としてインストールできます（ブラウザーの「安裝」（インストール）。favicon と manifest を含みます）。Service worker は公開の静的ファイルのみキャッシュし、`/media/*` と `/ws` は扱いません。ページは常にネットワーク優先です。Web ページではブラウザー標準の右クリックメニューを無効にし（入力欄を除く）、メッセージメニューを表示します（自分のメッセージの送信取消に対応。タッチの長押しでも同じです。チャットを右クリックするとチャンネル ID を、左上の自分の名前を右クリックすると自分の ID を表示・コピーできます）。これは操作の利便性のためであり、セキュリティ機構ではありません。チャット一覧の未読数は LINE 側の数値を使用し、チャットを開いて既読通知を送った後に消去します。スマートフォンなどほかの端末で読んだ場合（LINE の `SEND_CHAT_CHECKED`）もすぐに消去します。グループ名や画像の変更、メンバーの参加・退出、友だちの名前やプロフィール画像の変更があると、サービスはチャンネル一覧を LINE から取り直します（一連の変更につき 1 回、かつ最大 30 秒に 1 回）。
  
@@ -250,10 +254,12 @@ index a6e80b5..f3df87e 100644
 +
 +チャンネルと友だち一覧の取得は現在のログインに属します。アカウント変更後は、旧処理による友だちの後続バッチ、メッセージボックスの次ページ、OpenChat の概要照会を止め、旧アカウントの表示名やプレビューを引き継ぎません。送信済みの要求は完了する場合があります。友だちは 100 人ずつ最大 3 バッチ、OpenChat の概要は最大 5 件の並行取得を維持し、現在のアカウントの概要取得に失敗しても一覧は表示します。
 +
++概要は現在の一覧にあるチャットだけを処理します。一覧にないメッセージボックスもページカーソルの更新と重複ページの検出には使いますが、プレビューの復号や送信者の照会は行わず、100 人分の照会枠を表示対象に残します。通常のチャットがない場合は talk のメッセージボックス API を呼びません。OpenChat の概要は引き続き取得します。
++
  チャットのメッセージを右クリック（タッチ画面では長押し）して「顯示寄件者 ID」を選ぶと、相手の ID を表示・コピーできます。ボットはリアルタイムの `message`／`message:edit` の `message.senderId`、または `history` の `messages[].senderId` から取得できます。引き続き `api.chats` 内のみが対象です。OpenChat では通常の LINE アカウント ID ではなく、その社群のメンバー ID を返します。メッセージに登場していないメンバーは検索しません。
  
  `session.json` には認証情報と E2EE key material が含まれるため、必ず権限 `600` で保存し、共有・コミットしてはいけません。`config.yaml` は個人設定であり、バージョン管理には含めません。`api-token.json`（ボット Token の SHA-256 と作成時刻、権限 `600`）と `linejs.pid`（実行中のサービスの PID。`stop`／`restart` で使用）もバージョン管理には含めません。
-@@ -164,18 +188,25 @@ HTTP：`GET /media/:mediaId`（スタンプ、スタンプパックのアイコ
+@@ -164,18 +190,25 @@ HTTP：`GET /media/:mediaId`（スタンプ、スタンプパックのアイコ
  | ボット → サービス | `history:fetch` | `{ requestId, chatId, limit?, before? }`：Web ページと同じページ取得ですが、既読 snapshot は含みません |
  | ボット → サービス | `scam:check` | `{ requestId, chatId, messageId }`：`api.chats` 内の**相手から届いた**、サービスが表示済み（リアルタイム受信または `history:fetch` で取得）のテキストメッセージを Jev で分析します。サーバーは自身のキャッシュのテキストを送ります。`jev.token` の設定が必要で（未設定時は `SCAM_CHECK_UNAVAILABLE`）、全ボット合計で毎分 10 回、1 回ごとに TypeSafe の料金がかかります。成功時は `scam:result { requestId, chatId, messageId, analysis: { probability, tactic? } }` |
  | ボット → サービス | `profile:get` | `{ requestId }`：自分の ID と名前をいつでも取得できます。`profile { requestId, profile: { userId, displayName, pictureId? } }` を返します（`auth:ready` と同じ内容。LINE には問い合わせず、`history:fetch` と接続ごとに毎秒 10 回の枠を共有。未ログイン時は `INVALID_REQUEST`） |
@@ -283,7 +289,7 @@ index a6e80b5..f3df87e 100644
  
  ```js
 diff --git a/README.md b/README.md
-index 7704eb9..c8ceca3 100644
+index 7704eb9..e3a027e 100644
 --- a/README.md
 +++ b/README.md
 @@ -26,7 +26,27 @@ flowchart LR
@@ -315,7 +321,7 @@ index 7704eb9..c8ceca3 100644
  
  ## 環境需求
  
-@@ -71,6 +91,10 @@ npm start
+@@ -71,6 +91,12 @@ npm start
  
  可安裝為 PWA（瀏覽器「安裝」；含 favicon 與 manifest）。Service worker 只快取公開靜態檔，不碰 `/media/*` 與 `/ws`；頁面一律網路優先。網頁會鎖定瀏覽器原生右鍵選單（輸入欄位除外），右鍵改為訊息選單（可收回自己的訊息；觸控長按亦同。聊天頻道上右鍵可顯示並複製頻道 ID，左上角自己的名稱上右鍵可顯示並複製自己的 ID），此為操作便利而非安全機制。聊天列表未讀數取自 LINE 端計數，開啟並回報已讀後清除；在手機等其他裝置讀過（LINE 的 `SEND_CHAT_CHECKED`）也會即時清除。群組改名、換圖、成員加入或離開、好友換名字或大頭照時，服務會重新向 LINE 取得頻道清單（同一波變動只取一次，且最多每 30 秒一次）。
  
@@ -323,10 +329,12 @@ index 7704eb9..c8ceca3 100644
 +
 +頻道與好友清單的載入以當前登入為界：換帳號後，舊工作停止後續好友批次、訊息匣分頁及 OpenChat 摘要查詢，也不得把舊暱稱或預覽帶入新帳號。已送出的要求可能仍完成。好友每批百人、最多三批並行，OpenChat 摘要最多五個並行，以及當前帳號摘要失敗時仍顯示清單的行為均不變。
 +
++摘要只處理目前清單內的聊天室。未列出的訊息匣仍計入分頁游標與重複頁偵測，但不解密或補查寄件者，避免佔用可見摘要的百人成員查詢額度。沒有一般聊天頻道時，不呼叫 talk 訊息匣 API；OpenChat 摘要照常取得。
++
  在聊天室訊息上按右鍵（觸控長按），選「顯示寄件者 ID」可查看與複製其他人的 ID。機器人 API 從即時 `message`／`message:edit` 的 `message.senderId`，或 `history` 的 `messages[].senderId` 取得；仍限 `api.chats` 內的聊天室。社群回傳的是社群成員 ID，不是一般 LINE 帳號 ID；此功能不查詢未出現過的成員。
  
  `session.json` 包含憑證與 E2EE key material，必須以權限 `600` 保存，不得分享或提交。`config.yaml` 為個人設定，不入版本控制。`api-token.json`（機器人 Token 的 SHA-256 與建立時間，權限 `600`）與 `linejs.pid`（執行中服務的 PID，供 `stop`／`restart` 使用）同樣不入版本控制。
-@@ -164,18 +188,25 @@ HTTP：`GET /media/:mediaId`（貼圖、貼圖包圖示、大頭照與原圖、
+@@ -164,18 +190,25 @@ HTTP：`GET /media/:mediaId`（貼圖、貼圖包圖示、大頭照與原圖、
  | 機器人 → 服務 | `history:fetch` | `{ requestId, chatId, limit?, before? }`：與網頁相同的分頁，但不附已讀快照 |
  | 機器人 → 服務 | `scam:check` | `{ requestId, chatId, messageId }`：以 Jev 分析 `api.chats` 內**別人傳來**、服務已顯示（即時收到或 `history:fetch` 取得）的文字訊息；伺服器送自己快取的文字。需設定 `jev.token`（否則 `SCAM_CHECK_UNAVAILABLE`），所有機器人合計每分鐘 10 次，每次依 TypeSafe 計費。成功回 `scam:result { requestId, chatId, messageId, analysis: { probability, tactic? } }` |
  | 機器人 → 服務 | `profile:get` | `{ requestId }`：隨時取得自己的 ID 與名稱，回 `profile { requestId, profile: { userId, displayName, pictureId? } }`（同 `auth:ready`；不呼叫 LINE，與 `history:fetch` 共用每連線每秒 10 次；未登入回 `INVALID_REQUEST`） |
@@ -507,7 +515,7 @@ index c7143f7..59cd0c4 100644
      if (this.events.length >= this.max) return false;
      this.events.push(now);
 diff --git a/src/line/provider.ts b/src/line/provider.ts
-index 58f8902..e5a01a9 100644
+index 58f8902..73e8752 100644
 --- a/src/line/provider.ts
 +++ b/src/line/provider.ts
 @@ -3,7 +3,7 @@ import { BaseClient, type Device, type FetchLike } from "@evex/linejs/base";
@@ -1024,7 +1032,21 @@ index 58f8902..e5a01a9 100644
      return channels;
    }
  
-@@ -1067,6 +1236,7 @@ export class EvexLineProvider implements LineProvider {
+@@ -1056,6 +1225,8 @@ export class EvexLineProvider implements LineProvider {
+    * happened to receive. Best effort: without a summary the list simply shows no badge or preview.
+    */
+   private async attachSummaries(client: Client, channels: Channel[]): Promise<void> {
++    const talkChannels = new Set<string>();
++    for (const channel of channels) if (channel.kind !== "square") talkChannels.add(channel.channelId);
+     const counts = new Map<string, number>();
+     const activeAt = new Map<string, number>();
+     const talkLast = new Map<string, LineMessage>();
+@@ -1063,13 +1234,16 @@ export class EvexLineProvider implements LineProvider {
+     try {
+       const seen = new Set<string>();
+       let minChatId: string | undefined;
+-      for (let page = 0; page < UNREAD_MAX_PAGES; page += 1) {
++      for (let page = 0; talkChannels.size > 0 && page < UNREAD_MAX_PAGES; page += 1) {
          const { messageBoxes, hasNext } = await client.base.talk.getMessageBoxes({
            messageBoxListRequest: { withUnreadCount: true, lastMessagesPerMessageBoxCount: 1, ...(minChatId ? { minChatId } : {}) },
          });
@@ -1032,7 +1054,12 @@ index 58f8902..e5a01a9 100644
          const fresh = (messageBoxes ?? []).filter((box) => !seen.has(box.id));
          for (const box of fresh) {
            seen.add(box.id);
-@@ -1082,6 +1252,7 @@ export class EvexLineProvider implements LineProvider {
++          // Unlisted boxes still advance pagination, but never need a decrypted or named preview.
++          if (!talkChannels.has(box.id)) continue;
+           counts.set(box.id, Number(box.unreadCount));
+           const delivered = Number(box.lastDeliveredMessageId?.deliveredTime);
+           if (Number.isFinite(delivered) && delivered > 0) activeAt.set(box.id, delivered);
+@@ -1082,6 +1256,7 @@ export class EvexLineProvider implements LineProvider {
      } catch {
        // Talk chats just show no badge or preview this time.
      }
@@ -1040,7 +1067,7 @@ index 58f8902..e5a01a9 100644
      const squares = channels.filter((channel) => channel.kind === "square");
      for (let offset = 0; offset < squares.length; offset += SQUARE_LOOKUP_CONCURRENCY) {
        await Promise.all(squares.slice(offset, offset + SQUARE_LOOKUP_CONCURRENCY).map(async (channel) => {
-@@ -1096,8 +1267,10 @@ export class EvexLineProvider implements LineProvider {
+@@ -1096,8 +1271,10 @@ export class EvexLineProvider implements LineProvider {
            // This OpenChat shows no badge or preview this time.
          }
        }));
@@ -1051,7 +1078,7 @@ index 58f8902..e5a01a9 100644
      for (const channel of channels) {
        const count = counts.get(channel.channelId);
        if (count && Number.isFinite(count) && count > 0) channel.unreadCount = Math.min(count, MAX_UNREAD_SHOWN);
-@@ -1125,7 +1298,9 @@ export class EvexLineProvider implements LineProvider {
+@@ -1125,7 +1302,9 @@ export class EvexLineProvider implements LineProvider {
      }
      for (const { raw, name } of squareLast.values()) if (name) this.rememberName(raw.message.from, name);
      await this.resolveMembers(client, "talk", [...decrypted.values()].flatMap((entry) => [entry.raw.from, ...chatEventMids(entry.raw.contentMetadata)]));
@@ -1061,7 +1088,7 @@ index 58f8902..e5a01a9 100644
      for (const [chatId, entry] of decrypted) {
        try {
          const message = this.talkToMessage(entry.raw, myMid, entry.undecryptable, true);
-@@ -1184,9 +1359,13 @@ export class EvexLineProvider implements LineProvider {
+@@ -1184,9 +1363,13 @@ export class EvexLineProvider implements LineProvider {
      this.client = undefined;
      this.profiles.clear();
      this.lookupMisses.clear();
@@ -2281,7 +2308,7 @@ index 3137b0f..89d18f0 100644
 +  assert.equal(media.getUpload(id), undefined);
 +});
 diff --git a/test/provider.test.mjs b/test/provider.test.mjs
-index 3dae4b2..2afde0d 100644
+index 3dae4b2..8fe3a2a 100644
 --- a/test/provider.test.mjs
 +++ b/test/provider.test.mjs
 @@ -17,6 +17,8 @@ function fakeBase(overrides = {}) {
@@ -2941,7 +2968,101 @@ index 3dae4b2..2afde0d 100644
  test("the chat list carries LINE's unread count, activity time and last message; E2EE previews decrypt once and register no media", async () => {
    const at = (n) => String(1_700_000_000_000 + n);
    let boxRequests = 0;
-@@ -407,6 +1016,350 @@ test("received stickers become sticker media ids only for numeric ids; animated
+@@ -176,6 +785,93 @@ test("the chat list carries LINE's unread count, activity time and last message;
+   assert.equal(decrypts, 1, "the same last message is not decrypted again on the next refresh");
+ });
+ 
++test("unlisted message boxes preserve pagination without consuming visible preview lookups", async () => {
++  const room = `r${"b".repeat(32)}`, friend = mid(7), sender = mid(2);
++  const hidden = Array.from({ length: 200 }, (_, index) => {
++    const from = mid(1000 + index);
++    return { id: from, unreadCount: 1, lastMessages: [talk(String(index + 1), ME, from, undefined, { toType: "USER", contentMetadata: { e2eeVersion: "2" } }).raw] };
++  });
++  const shown = [
++    { id: GROUP_A, unreadCount: 3, lastDeliveredMessageId: { deliveredTime: "1700000099999" }, lastMessages: [talk("900", GROUP_A, sender, undefined, { contentMetadata: { e2eeVersion: "2" } }).raw] },
++    { id: room, unreadCount: 2, lastMessages: [talk("901", room, sender, "房間摘要", { toType: "ROOM" }).raw] },
++    { id: friend, unreadCount: 0, lastMessages: [talk("902", ME, friend, "私人摘要", { toType: "USER" }).raw] },
++  ];
++  const cursors = [], lookups = [], decrypted = [];
++  const base = fakeBase({
++    relation: {
++      async getUserFriendIds() { return { userFriendMids: [friend] }; },
++      async getContactsV3() { return { responses: [{ targetUserMid: friend, targetProfileDetail: { profileName: "好友" } }] }; },
++    },
++    talk: {
++      async getMessageBoxes({ messageBoxListRequest }) {
++        const page = cursors.length;
++        cursors.push(messageBoxListRequest.minChatId);
++        // A page with no displayed chats is still progress; repeated unlisted boxes are not.
++        return { hasNext: true, messageBoxes: page === 0 ? hidden.slice(0, 100) : page === 1 ? hidden.slice(100) : page === 2 ? shown : hidden.slice(0, 100) };
++      },
++      async getContactsV2({ mids }) {
++        lookups.push(...mids);
++        return { contacts: Object.fromEntries(mids.map((mid) => [mid, { contact: { mid, displayName: "可見成員" } }])) };
++      },
++    },
++  });
++  base.e2ee.decryptE2EEMessage = async (raw) => { decrypted.push(raw.id); return { ...raw, text: "可見摘要" }; };
++  const { provider } = await activeProvider(base, {
++    async fetchJoinedChats() { return [{ mid: GROUP_A, name: "群組", raw: { type: "GROUP" } }, { mid: room, name: "房間", raw: { type: "ROOM" } }]; },
++    async fetchJoinedSquares() { return []; },
++    async fetchJoinedSquareChats() { return []; },
++  });
++  const channels = await provider.fetchChannels();
++  assert.deepEqual(cursors, [undefined, hidden[99].id, hidden[199].id, friend]);
++  assert.deepEqual(lookups, [sender], "unlisted senders cannot exhaust the hundred-member lookup budget");
++  assert.deepEqual(decrypted, ["900"]);
++  assert.deepEqual(channels.map(({ channelId, kind, unreadCount, lastMessage }) => ({ channelId, kind, unreadCount, text: lastMessage?.text, sender: lastMessage?.senderName })), [
++    { channelId: friend, kind: "user", unreadCount: undefined, text: "私人摘要", sender: "好友" },
++    { channelId: GROUP_A, kind: "group", unreadCount: 3, text: "可見摘要", sender: "可見成員" },
++    { channelId: room, kind: "room", unreadCount: 2, text: "房間摘要", sender: "可見成員" },
++  ]);
++  assert.equal(channels.find(({ channelId }) => channelId === GROUP_A).lastMessageAt, 1700000099999);
++  await provider.close();
++});
++
++test("channel lists without talk chats do not request talk summaries", async (t) => {
++  for (const withSquare of [false, true]) {
++    await t.test(withSquare ? "OpenChat-only list" : "empty list", async () => {
++      let talkCalls = 0, squareCalls = 0;
++      const base = fakeBase({
++        relation: { async getUserFriendIds() { return { userFriendMids: [] }; } },
++        talk: { async getMessageBoxes() { talkCalls += 1; throw new Error("UNNEEDED_TALK_REQUEST"); } },
++        square: {
++          async getSquareChatStatus() {
++            squareCalls += 1;
++            return { chatStatus: {
++              otherStatus: { unreadMessageCount: 4, memberCount: 42 },
++              senderDisplayName: "社群成員",
++              lastMessage: { message: { id: "903", to: SQUARE, from: "p-member", contentType: "NONE", text: "社群摘要", createdTime: "1700000000903", contentMetadata: {} } },
++            } };
++          },
++          async getSquareMember() { return { squareMember: { displayName: "社群成員" } }; },
++        },
++      });
++      const { provider } = await activeProvider(base, {
++        async fetchJoinedChats() { return []; },
++        async fetchJoinedSquares() { return []; },
++        async fetchJoinedSquareChats() { return withSquare ? [{ raw: { squareChatMid: SQUARE, name: "社群" } }] : []; },
++      });
++      const channels = await provider.fetchChannels();
++      assert.equal(talkCalls, 0);
++      assert.equal(squareCalls, withSquare ? 1 : 0);
++      if (withSquare) {
++        assert.equal(channels.length, 1);
++        assert.deepEqual([channels[0].channelId, channels[0].memberCount, channels[0].unreadCount, channels[0].lastMessage.text, channels[0].lastMessage.senderName], [SQUARE, 42, 4, "社群摘要", "社群成員"]);
++      } else {
++        assert.deepEqual(channels, []);
++      }
++      await provider.close();
++    });
++  }
++});
++
+ test("OpenChat history stays current with live and own messages without walking LINE's events again", async () => {
+   let walks = 0;
+   const event = (id, text) => ({ payload: { receiveMessage: { squareMessage: { message: { id, to: SQUARE, from: "p-member", contentType: "NONE", text, createdTime: String(1_700_000_000_000 + Number(id)), contentMetadata: {} } }, senderDisplayName: "社群成員" } } });
+@@ -407,6 +1103,350 @@ test("received stickers become sticker media ids only for numeric ids; animated
    ]);
  });
  
@@ -3292,7 +3413,7 @@ index 3dae4b2..2afde0d 100644
  test("a received file becomes a download with a safe name; it is never served as inline media and a preview or taken-back file is not fetchable", async () => {
    const downloads = [];
    const base = fakeBase();
-@@ -501,7 +1454,9 @@ test("OpenChat concurrent history shares the walk and retains interleaved live d
+@@ -501,7 +1541,9 @@ test("OpenChat concurrent history shares the walk and retains interleaved live d
    assert.equal(await provider.fetchMessageMedia("11"), undefined);
  });
  
@@ -3303,7 +3424,7 @@ index 3dae4b2..2afde0d 100644
    let walks = 0;
    const other = "m" + "t".repeat(32);
    const base = fakeBase({ square: {
-@@ -518,12 +1473,94 @@ test("OpenChat paging survives an earlier live delivery and cache refresh; chats
+@@ -518,12 +1560,94 @@ test("OpenChat paging survives an earlier live delivery and cache refresh; chats
    await settle();
    const older = await provider.fetchHistory(channel, 2, newest.cursor);
    assert.deepEqual(older.messages.map((message) => message.messageId), ["1", "2"]);
@@ -3399,7 +3520,7 @@ index 3dae4b2..2afde0d 100644
  test("OpenChat walks deduplicate events, consume retained mutations, and authorize media only on the displayed page", async () => {
    const base = fakeBase({ square: {
      async fetchSquareChatEvents() {
-@@ -565,7 +1602,9 @@ test("OpenChat an invalidated in-flight walk cannot refill history or media afte
+@@ -565,7 +1689,9 @@ test("OpenChat an invalidated in-flight walk cannot refill history or media afte
    assert.equal(provider.mediaOrigins.size, 0);
  });
  
@@ -3410,7 +3531,7 @@ index 3dae4b2..2afde0d 100644
    const base = fakeBase({ square: {
      async fetchSquareChatEvents() { return { events: [squareEvent(1), squareEvent(2, SQUARE, "IMAGE")] }; },
      async getSquareMember() { return { squareMember: { displayName: "成員" } }; },
-@@ -580,7 +1619,7 @@ test("OpenChat own reaction changes and take-backs remain correct on the next ca
+@@ -580,7 +1706,7 @@ test("OpenChat own reaction changes and take-backs remain correct on the next ca
    assert.deepEqual((await provider.fetchHistory(channel, 50)).messages[0].reactions, { counts: { LOVE: 1 }, mine: "LOVE" });
    await provider.react(channel, "1", undefined);
    await provider.unsendMessage(channel, "2");
@@ -3419,7 +3540,7 @@ index 3dae4b2..2afde0d 100644
    const page = await provider.fetchHistory(channel, 50);
    assert.equal(page.messages[0].reactions, undefined);
    assert.equal(page.messages[1].unsent, true);
-@@ -621,7 +1660,9 @@ test("OpenChat live history remains bounded without shifting message-anchored cu
+@@ -621,7 +1747,9 @@ test("OpenChat live history remains bounded without shifting message-anchored cu
    assert.deepEqual((await provider.fetchHistory(channel, 2, latest.cursor)).messages.map((message) => message.messageId), ["5007", "5008"]);
  });
  
@@ -3430,7 +3551,7 @@ index 3dae4b2..2afde0d 100644
    let refreshed = false;
    let release;
    const gate = new Promise((resolve) => { release = resolve; });
-@@ -641,7 +1682,7 @@ test("OpenChat TTL refresh replaces old live reactions with current history whil
+@@ -641,7 +1769,7 @@ test("OpenChat TTL refresh replaces old live reactions with current history whil
    await provider.fetchHistory(channel, 50);
    emit("square:event", squareStatus(1, { 1: 2, 2: { 3: 2 } }));
    emit("square:event", squareStatus(2, { 1: 1, 2: { 3: 1 } }));
@@ -3439,7 +3560,7 @@ index 3dae4b2..2afde0d 100644
    refreshed = true;
    const refreshing = provider.fetchHistory(channel, 50);
    emit("square:event", squareStatus(2, { 1: 0, 2: {} }));
-@@ -650,3 +1691,78 @@ test("OpenChat TTL refresh replaces old live reactions with current history whil
+@@ -650,3 +1778,78 @@ test("OpenChat TTL refresh replaces old live reactions with current history whil
    assert.deepEqual(page.messages[0].reactions, { counts: { LOVE: 3 } }, "history replaces reactions from before this refresh");
    assert.equal(page.messages[1].reactions, undefined, "live removal during refresh still overrides the walked snapshot");
  });
