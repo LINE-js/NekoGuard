@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { hash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
 import { buildAlerts } from "./alerts.js";
@@ -115,7 +115,7 @@ export class ScamGuard extends EventEmitter {
     }
     if (message.channelKind !== "square" || !this.channels.has(message.channelId)
       || message.senderId === this.userId || message.senderId === this.ownMembers.get(message.channelId)) return;
-    const signature = createHash("sha256").update(message.text).digest("hex");
+    const signature = hash("sha256", message.text, "hex");
     const previous = this.recent.get(key);
     if (previous?.signature === signature || previous?.signature === "unsent") return;
     // Even when the replacement cannot be queued, the old result is no longer valid.
