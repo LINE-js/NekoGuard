@@ -37,10 +37,10 @@ index 59cf16e..6e1f4a0 100644
  
  LINE operation 與連線注意事項：linejs 未記載多數 operation 的參數排列，`SEND_CHAT_CHECKED`（手機已讀）只取 `param1` 且須為伺服器已知聊天室；群組／個人資料／聊天室成員變動不解析參數，只觸發節流的頻道清單重新整理（3 秒合併、最多每 30 秒一次），不得改成依參數猜測內容。頻道清單的最後一則訊息（`Channel.lastMessage`）是預覽，不登記媒體來源，不能藉此下載。WS 心跳：伺服器以協定層 Ping 每 30 秒檢查、兩輪無回應即關閉；網頁 `ping` 需 10 秒內收到 `pong`，回到前景立即探測。斷線記錄（網頁主控台、服務日誌 `WS_CLOSED`）只可含時間、close code、截短的 reason 與前後景狀態，不得含標頭、cookie 或 Token。
 diff --git a/PLAN.md b/PLAN.md
-index 49acd5b..08b187a 100644
+index 49acd5b..f46823b 100644
 --- a/PLAN.md
 +++ b/PLAN.md
-@@ -144,23 +144,60 @@
+@@ -144,23 +144,62 @@
  
  > 實作補完（協定版本仍為 2）：登出／換帳號以 session generation 作廢歷史、發送、回應、收回、已讀與頻道查詢的舊結果；歷史重新載入也同步清除已取消的回應。OpenChat 歷史採同聊天室 single-flight、時間＋訊息 id 錨點，快取最多 5 個聊天室各 5000 則、10 分鐘，合併即時訊息與狀態，過期時重新取得回應，僅已提供頁面的訊息授權媒體。網頁搜尋維持即時更新並跨聊天室依時間排序；初次歷史失敗可重試，回應更新不重建媒體 DOM，登出清除搜尋、私人畫面與通知。隔離測試與無頭靜音瀏覽器已驗證；尚未對本次變動重新進行真實 LINE Gate 驗收。
  
@@ -72,6 +72,8 @@ index 49acd5b..08b187a 100644
 +
 +> 上傳暫存計時：十分鐘有效期改用單調時間，避免校時前跳讓新上傳失效、回撥讓過期 token 繼續可用。實際 HTTP 上傳＋WebSocket 發送驗證期限前可用、精確到期拒絕、成功消耗後不可重用，受控 Provider 收到完整圖片位元組。新增／讀取時回收到期項目與容量限制不變；270 項測試通過，未連接真實 LINE。
 +
++> 成員候選有界選取：依原順序選滿每次既有上限的 100 位符合資格者後停止，不再展開／過濾整份名單再截斷；去重、已知資料略過、退避與並行數不變。兩種五千則歷史 fixture 經實際 Provider＋WebSocket，前兩頁完整回覆 hash 與查詢邊界保持不變；本機基準量測候選查詢流程，不宣稱 LINE 網路加速。271 項測試通過，未連接真實 LINE。
++
  > v1.15（小語裁示：JEV 詐騙分析，協定版本仍為 2）：`config.yaml` 新增選用區段 `jev`（`token`：TypeSafe API 金鑰，有值才啟用；`model`：預設 `jev-1.13.0`）。新增 Server → Client `scam:state`（`{ enabled }`，連線即送、只給網頁，不含金鑰）與 `scam:result`（`{ requestId, chatId, messageId, analysis: { probability, tactic?: { kind, confidence } } }`，只送給要求的連線），Client → Server `scam:check`（`{ requestId, chatId, messageId }`，僅網頁、每連線每分鐘 10 次）。伺服器只接受已顯示、非本帳號、未收回、已解密、非系統訊息的文字訊息，以自己快取的文字經 `src/jev/` 呼叫 `POST https://api.typesafe.ai/v1/systemone`（Noul 題問是否為詐騙、Choice 題問最接近的手法；題目用英文，因官方說明英文準確度最佳），回應 fail-closed；未設定金鑰回 `SCAM_CHECK_UNAVAILABLE`，失敗回 `SCAM_CHECK_FAILED`。網頁對別人的文字訊息右鍵出現「詐騙機率分析」，以官方範例門檻分級（> 0.8 高度疑似、≤ 0.2 不太像、其間無法確定）並註明為模型估計、文字已送至 TypeSafe。尚未以有效金鑰實測真實分析結果。
  
  > v1.16（小語裁示：JEV 開放給機器人 API，協定版本仍為 2；MCP 入口裁示不做）：機器人連線新增 `scam:check`（`{ requestId, chatId, messageId }`），規則同網頁——只接受伺服器已顯示、非本帳號、未收回、已解密、非系統訊息的文字訊息，送伺服器快取的文字——另限 `api.chats` 內的聊天室（其餘 `UNKNOWN_CHAT`），所有機器人連線合計每分鐘 10 次（與網頁各連線的額度分開）；成功回 `scam:result`，未設定金鑰回 `SCAM_CHECK_UNAVAILABLE`。機器人不收 `scam:state`。不接受機器人傳任意文字。
@@ -102,7 +104,7 @@ index 49acd5b..08b187a 100644
  | `channels` | `{ channels: Channel[] }`（snapshot，連線即送、變動重送） |
  | `messages` | `{ chatId, messages: Message[] }`（連線時快照，每個聊天室一個影格；舊訊息，不計未讀） |
  | `message` | `{ message: Message }`（即時新訊息） |
-@@ -190,6 +227,7 @@
+@@ -190,6 +229,7 @@
  | `message:react` | `{ requestId, chatId, messageId, reaction: "NICE"｜"LOVE"｜"FUN"｜"AMAZING"｜"SAD"｜"OMG"｜null }`（僅網頁，與 `message:send` 共用頻率上限） |
  | `scam:check` | `{ requestId, chatId, messageId }`（網頁每連線每分鐘 10 次；機器人限 `api.chats`、所有機器人合計每分鐘 10 次；只接受別人傳來、已顯示、未收回的文字訊息） |
  | `profile:get` | `{ requestId }`（自己的 `profile`；網頁與機器人皆可，不呼叫 LINE） |
@@ -110,7 +112,7 @@ index 49acd5b..08b187a 100644
  | `channels:refresh` | `{}` |
  | `api:token:create` / `api:token:revoke` | `{}`（產生或撤銷機器人 Token，並中斷所有機器人連線） |
  | `ping` | `{}` |
-@@ -197,7 +235,7 @@
+@@ -197,7 +237,7 @@
  ### 機器人 API（`/api/ws`）
  - 升級條件：`api.enabled`、**無 `Origin`**、`Authorization: Bearer linejs_…` 符合目前 Token；否則 403（同時超過 4 個連線回 429）。`Host` 不限制（同網頁）。
  - 連線時收到 `hello`、`auth:state`、`status`、`auth:ready`、僅含 `api.chats` 的 `channels`；之後只有這些聊天室的 `message`／`message:edit`。不重播、不給 `read`／`update:available`／`api:state`。
@@ -120,10 +122,10 @@ index 49acd5b..08b187a 100644
  
  ### HTTP
 diff --git a/README.en.md b/README.en.md
-index 6b97c31..6135325 100644
+index 6b97c31..9608392 100644
 --- a/README.en.md
 +++ b/README.en.md
-@@ -26,7 +26,23 @@ flowchart LR
+@@ -26,7 +26,25 @@ flowchart LR
  
  The backend binds only to `127.0.0.1` by default (configurable in `config.yaml`; see “Configuration”), on port `3789` by default. The backend builds with `tsc` into `dist/`; the frontend builds with Vite into `dist/web/`. Messages are stored only in memory (up to 500 per channel, deduplicated by id, with edits overwriting existing messages), without a database. Stickers, profile pictures, and received media are cached by the backend in an LRU cache (200MB by default) and served over HTTP on the same port.
  
@@ -145,10 +147,12 @@ index 6b97c31..6135325 100644
 +Read snapshots requested when the web page opens history retain their ten-second sharing window, measured by monotonic elapsed time rather than wall-clock time. Live read positions still merge during that window, and logout discards the old account's snapshots.
 +
 +Pending uploads remain usable for ten minutes of monotonic elapsed time, unaffected by wall-clock corrections. Expired items are still pruned on insertion or lookup, successful sends consume them, logout clears them, and existing capacity limits are unchanged.
++
++Member-name lookup stops scanning candidates once it selects the existing limit of 100 eligible members in input order, avoiding full-list intermediate arrays. Deduplication, cached-member skipping, failure cooldowns and lookup concurrency limits are unchanged.
  
  ## Requirements
  
-@@ -164,18 +180,25 @@ Lets your own programs (bots) send and receive messages. **Disabled by default**
+@@ -164,18 +182,25 @@ Lets your own programs (bots) send and receive messages. **Disabled by default**
  | Bot → Service | `history:fetch` | `{ requestId, chatId, limit?, before? }`: the same pagination as the web interface, without a read-receipt snapshot |
  | Bot → Service | `scam:check` | `{ requestId, chatId, messageId }`: check with Jev a text message **from someone else** in `api.chats` that the service has shown (received live or returned by `history:fetch`); the server sends its own cached text. Requires `jev.token` (otherwise `SCAM_CHECK_UNAVAILABLE`); 10 per minute across all bots, each billed by TypeSafe. Success returns `scam:result { requestId, chatId, messageId, analysis: { probability, tactic? } }` |
  | Bot → Service | `profile:get` | `{ requestId }`: get your own ID and name at any time; returns `profile { requestId, profile: { userId, displayName, pictureId? } }` (the same as `auth:ready`; no LINE request; shares the 10-per-second-per-connection budget with `history:fetch`; returns `INVALID_REQUEST` when not signed in) |
@@ -178,10 +182,10 @@ index 6b97c31..6135325 100644
  
  ```js
 diff --git a/README.ja.md b/README.ja.md
-index a6e80b5..30aefff 100644
+index a6e80b5..1a4cb83 100644
 --- a/README.ja.md
 +++ b/README.ja.md
-@@ -26,7 +26,23 @@ flowchart LR
+@@ -26,7 +26,25 @@ flowchart LR
  
  バックエンドは既定で `127.0.0.1` のみにバインドします（`config.yaml` で変更できます。「設定」を参照）。既定のポートは `3789` です。バックエンドは `tsc` で `dist/` に、フロントエンドは Vite で `dist/web/` にビルドします。メッセージはメモリにのみ保存し（チャンネルごとに最大 500 件、同じ id は重複排除、編集は上書き）、データベースは使用しません。スタンプ、プロフィール画像、受信したメディアはバックエンドの LRU キャッシュ（既定 200MB）を経由し、同じポートの HTTP で配信します。
  
@@ -203,10 +207,12 @@ index a6e80b5..30aefff 100644
 +Web ページで履歴を開いた際の既読スナップショットは、単調時計による経過時間で 10 秒間共有し、システム時刻の補正には影響されません。その間もリアルタイムの既読位置を統合し、ログアウト後は旧アカウントのスナップショットを引き継ぎません。
 +
 +アップロードの一時保存は単調時計で 10 分間利用でき、システム時刻の補正で早期失効したり有効期間が延びたりしません。期限切れは追加・参照時に削除し、送信成功時に消費、ログアウト時に消去する既存の動作と容量制限を維持します。
++
++メンバー名の照会は、入力順に既存上限の 100 人を選んだ時点で候補の走査を止め、名簿全体の中間配列を作りません。重複除外、既知メンバーの除外、失敗後の待機時間と照会の並行数制限は維持します。
  
  ## 動作要件
  
-@@ -164,18 +180,25 @@ HTTP：`GET /media/:mediaId`（スタンプ、スタンプパックのアイコ
+@@ -164,18 +182,25 @@ HTTP：`GET /media/:mediaId`（スタンプ、スタンプパックのアイコ
  | ボット → サービス | `history:fetch` | `{ requestId, chatId, limit?, before? }`：Web ページと同じページ取得ですが、既読 snapshot は含みません |
  | ボット → サービス | `scam:check` | `{ requestId, chatId, messageId }`：`api.chats` 内の**相手から届いた**、サービスが表示済み（リアルタイム受信または `history:fetch` で取得）のテキストメッセージを Jev で分析します。サーバーは自身のキャッシュのテキストを送ります。`jev.token` の設定が必要で（未設定時は `SCAM_CHECK_UNAVAILABLE`）、全ボット合計で毎分 10 回、1 回ごとに TypeSafe の料金がかかります。成功時は `scam:result { requestId, chatId, messageId, analysis: { probability, tactic? } }` |
  | ボット → サービス | `profile:get` | `{ requestId }`：自分の ID と名前をいつでも取得できます。`profile { requestId, profile: { userId, displayName, pictureId? } }` を返します（`auth:ready` と同じ内容。LINE には問い合わせず、`history:fetch` と接続ごとに毎秒 10 回の枠を共有。未ログイン時は `INVALID_REQUEST`） |
@@ -236,10 +242,10 @@ index a6e80b5..30aefff 100644
  
  ```js
 diff --git a/README.md b/README.md
-index 7704eb9..5e3b4ba 100644
+index 7704eb9..0ee39af 100644
 --- a/README.md
 +++ b/README.md
-@@ -26,7 +26,23 @@ flowchart LR
+@@ -26,7 +26,25 @@ flowchart LR
  
  後端預設只綁定 `127.0.0.1`（可在 `config.yaml` 改，見〈設定〉），預設埠 `3789`。後端 `tsc` 建置至 `dist/`；前端 Vite 建置至 `dist/web/`。訊息只存記憶體（每頻道最多 500 則，同 id 去重，編輯覆寫），不使用資料庫；貼圖、大頭照與收到的媒體經後端以 LRU（預設 200MB）快取後由同埠 HTTP 提供。
  
@@ -261,10 +267,12 @@ index 7704eb9..5e3b4ba 100644
 +網頁開啟歷史時的已讀快照維持十秒短期共用，以單調經過時間判斷，不受系統校時影響；期間仍合併即時已讀位置，登出後不沿用舊帳號快照。
 +
 +上傳暫存的十分鐘有效期以單調時間計算，避免校時造成提前失效或延長使用；到期項目仍在新增／讀取時清理，成功發送後移除、登出清空，既有容量限制不變。
++
++成員名稱查詢依原順序選滿每次既有的 100 人上限後，立即停止候選掃描，避免先為整份名單建立多層中間陣列。去重、已知成員略過、失敗退避與查詢並行限制不變。
  
  ## 環境需求
  
-@@ -164,18 +180,25 @@ HTTP：`GET /media/:mediaId`（貼圖、貼圖包圖示、大頭照與原圖、
+@@ -164,18 +182,25 @@ HTTP：`GET /media/:mediaId`（貼圖、貼圖包圖示、大頭照與原圖、
  | 機器人 → 服務 | `history:fetch` | `{ requestId, chatId, limit?, before? }`：與網頁相同的分頁，但不附已讀快照 |
  | 機器人 → 服務 | `scam:check` | `{ requestId, chatId, messageId }`：以 Jev 分析 `api.chats` 內**別人傳來**、服務已顯示（即時收到或 `history:fetch` 取得）的文字訊息；伺服器送自己快取的文字。需設定 `jev.token`（否則 `SCAM_CHECK_UNAVAILABLE`），所有機器人合計每分鐘 10 次，每次依 TypeSafe 計費。成功回 `scam:result { requestId, chatId, messageId, analysis: { probability, tactic? } }` |
  | 機器人 → 服務 | `profile:get` | `{ requestId }`：隨時取得自己的 ID 與名稱，回 `profile { requestId, profile: { userId, displayName, pictureId? } }`（同 `auth:ready`；不呼叫 LINE，與 `history:fetch` 共用每連線每秒 10 次；未登入回 `INVALID_REQUEST`） |
@@ -366,7 +374,7 @@ index c7143f7..59cd0c4 100644
      if (this.events.length >= this.max) return false;
      this.events.push(now);
 diff --git a/src/line/provider.ts b/src/line/provider.ts
-index 58f8902..669097a 100644
+index 58f8902..402ed03 100644
 --- a/src/line/provider.ts
 +++ b/src/line/provider.ts
 @@ -3,7 +3,7 @@ import { BaseClient, type Device, type FetchLike } from "@evex/linejs/base";
@@ -611,17 +619,32 @@ index 58f8902..669097a 100644
    }
  
    async fetchReadPositions(channel: ChannelRef): Promise<ReadPosition[]> {
-@@ -615,7 +669,8 @@ export class EvexLineProvider implements LineProvider {
+@@ -615,11 +669,19 @@ export class EvexLineProvider implements LineProvider {
     * the generic member name until the retry delay passes.
     */
    private async resolveMembers(client: Client, source: "talk" | "square", mids: Iterable<string>): Promise<void> {
 -    const now = Date.now();
+-    const pending = [...new Set(mids)]
+-      .filter((mid) => (source === "square" ? mid.length > 0 : TALK_USER_MID.test(mid)))
+-      .filter((mid) => !this.profiles.get(mid)?.settled && (this.lookupMisses.get(mid) ?? 0) <= now)
+-      .slice(0, MAX_LOOKUPS_PER_CALL);
 +    if (this.client !== client) return;
 +    const now = performance.now();
-     const pending = [...new Set(mids)]
-       .filter((mid) => (source === "square" ? mid.length > 0 : TALK_USER_MID.test(mid)))
-       .filter((mid) => !this.profiles.get(mid)?.settled && (this.lookupMisses.get(mid) ?? 0) <= now)
-@@ -628,10 +683,11 @@ export class EvexLineProvider implements LineProvider {
++    const pending: string[] = [];
++    const seen = new Set<string>();
++    for (const mid of mids) {
++      if (seen.has(mid)) continue;
++      seen.add(mid);
++      if (!(source === "square" ? mid.length > 0 : TALK_USER_MID.test(mid))) continue;
++      if (!this.profiles.get(mid)?.settled && (this.lookupMisses.get(mid) ?? 0) <= now) {
++        pending.push(mid);
++        if (pending.length === MAX_LOOKUPS_PER_CALL) break;
++      }
++    }
+     if (pending.length === 0) return;
+     const timeout = Promise.withResolvers<void>();
+     const timer = setTimeout(timeout.resolve, LOOKUP_TIMEOUT_MS);
+@@ -628,10 +690,11 @@ export class EvexLineProvider implements LineProvider {
      } finally {
        clearTimeout(timer);
      }
@@ -635,7 +658,7 @@ index 58f8902..669097a 100644
        for (const [mid, until] of this.lookupMisses) if (until <= now) this.lookupMisses.delete(mid);
      }
    }
-@@ -652,6 +708,7 @@ export class EvexLineProvider implements LineProvider {
+@@ -652,6 +715,7 @@ export class EvexLineProvider implements LineProvider {
  
    private async lookupSquareMembers(client: Client, mids: string[]): Promise<void> {
      for (let offset = 0; offset < mids.length; offset += SQUARE_LOOKUP_CONCURRENCY) {
@@ -643,7 +666,7 @@ index 58f8902..669097a 100644
        await Promise.all(mids.slice(offset, offset + SQUARE_LOOKUP_CONCURRENCY).map(async (mid) => {
          try {
            const { squareMember } = await client.base.square.getSquareMember({ squareMemberMid: mid });
-@@ -668,6 +725,56 @@ export class EvexLineProvider implements LineProvider {
+@@ -668,6 +732,56 @@ export class EvexLineProvider implements LineProvider {
      return this.client;
    }
  
@@ -700,7 +723,7 @@ index 58f8902..669097a 100644
    async fetchHistory(channel: ChannelRef, limit: number, before?: string): Promise<HistoryPage> {
      const client = this.requireClient();
      return channel.kind === "square"
-@@ -717,9 +824,17 @@ export class EvexLineProvider implements LineProvider {
+@@ -717,9 +831,17 @@ export class EvexLineProvider implements LineProvider {
      let end = all.length;
      if (before !== undefined) {
        const match = /^(\d+):(\d{1,24})$/.exec(before);
@@ -721,7 +744,7 @@ index 58f8902..669097a 100644
      }
      const start = Math.max(0, end - limit);
      const messages = all.slice(start, end);
-@@ -735,8 +850,8 @@ export class EvexLineProvider implements LineProvider {
+@@ -735,8 +857,8 @@ export class EvexLineProvider implements LineProvider {
    private async loadSquareMessages(client: Client, squareChatMid: string): Promise<Message[]> {
      const cached = this.squareCache.get(squareChatMid);
      if (cached?.loading) return cached.loading;
@@ -732,7 +755,7 @@ index 58f8902..669097a 100644
      // Take-backs are permanent; reaction snapshots are not. Only events arriving during this
      // walk override its history statuses, otherwise an expired live snapshot would win forever.
      if (cached) for (const [id, update] of cached.updates) {
-@@ -801,7 +916,7 @@ export class EvexLineProvider implements LineProvider {
+@@ -801,7 +923,7 @@ export class EvexLineProvider implements LineProvider {
      entry.messages.sort((a, b) => this.compareSquareMessages(a, b));
      for (const [id, update] of entry.updates) this.applySquareUpdate(entry, id, update);
      this.boundSquareHistory(entry);
@@ -741,7 +764,7 @@ index 58f8902..669097a 100644
      return entry.messages;
    }
  
-@@ -850,10 +965,14 @@ export class EvexLineProvider implements LineProvider {
+@@ -850,10 +972,14 @@ export class EvexLineProvider implements LineProvider {
    private rememberSquareMessage(message: Message): void {
      const cached = this.squareCache.get(message.channelId);
      if (!cached) return;
@@ -760,7 +783,7 @@ index 58f8902..669097a 100644
      const origin = this.mediaOrigins.get(message.messageId);
      if (origin?.square) cached.origins.set(message.messageId, origin.raw);
      const update = cached.updates.get(message.messageId);
-@@ -1184,9 +1303,11 @@ export class EvexLineProvider implements LineProvider {
+@@ -1184,9 +1310,11 @@ export class EvexLineProvider implements LineProvider {
      this.client = undefined;
      this.profiles.clear();
      this.lookupMisses.clear();
@@ -1624,7 +1647,7 @@ index 3137b0f..89d18f0 100644
 +  assert.equal(media.getUpload(id), undefined);
 +});
 diff --git a/test/provider.test.mjs b/test/provider.test.mjs
-index 3dae4b2..66e09c8 100644
+index 3dae4b2..73fbfc4 100644
 --- a/test/provider.test.mjs
 +++ b/test/provider.test.mjs
 @@ -17,6 +17,8 @@ function fakeBase(overrides = {}) {
@@ -1683,7 +1706,7 @@ index 3dae4b2..66e09c8 100644
  test("a slow member lookup holds back only its own chat; each chat keeps arrival order", async () => {
    let release;
    const gate = new Promise((resolve) => { release = resolve; });
-@@ -72,6 +94,121 @@ test("a slow member lookup holds back only its own chat; each chat keeps arrival
+@@ -72,6 +94,164 @@ test("a slow member lookup holds back only its own chat; each chat keeps arrival
    assert.equal(received[1].message.senderName, `名-${slow.slice(-3)}`);
  });
  
@@ -1770,6 +1793,49 @@ index 3dae4b2..66e09c8 100644
 +  }
 +});
 +
++test("history resolves the first hundred eligible distinct members without spending slots on cached or cooling members", async () => {
++  const seedChat = "m" + "b".repeat(32);
++  const cached = "p" + "e".repeat(32), cooling = "p" + "f".repeat(32);
++  const eligible = Array.from({ length: 101 }, (_, index) => "p" + String(index + 1).padStart(32, "0"));
++  const mids = [cached, cooling, "", eligible[0], eligible[0], ...eligible];
++  const queried = [];
++  const event = (id, chat, from) => {
++    const result = squareEvent(id, chat);
++    result.payload.receiveMessage.squareMessage.message.from = from;
++    delete result.payload.receiveMessage.senderDisplayName;
++    return result;
++  };
++  const base = fakeBase({ square: {
++    async fetchSquareChatEvents({ squareChatMid, continuationToken }) {
++      if (squareChatMid === seedChat) return { events: [event(1000, seedChat, cached), event(1001, seedChat, cooling)] };
++      const offset = Number(continuationToken ?? 0);
++      return {
++        events: mids.slice(offset, offset + 100).map((from, index) => event(mids.length - offset - index, SQUARE, from)),
++        ...(offset + 100 < mids.length ? { continuationToken: String(offset + 100), syncToken: "fixture" } : {}),
++      };
++    },
++    async getSquareMember({ squareMemberMid }) {
++      queried.push(squareMemberMid);
++      if (squareMemberMid === cooling) throw new Error("unavailable");
++      return { squareMember: { displayName: `查得-${squareMemberMid}` } };
++    },
++  } });
++  const { provider } = await activeProvider(base);
++  await provider.fetchHistory({ channelId: seedChat, kind: "square" }, 50);
++  queried.length = 0;
++  const channel = { channelId: SQUARE, kind: "square" };
++  const first = await provider.fetchHistory(channel, 100);
++  const second = await provider.fetchHistory(channel, 100, first.cursor);
++  assert.deepEqual(queried, eligible.slice(0, 100));
++  const messages = [...first.messages, ...second.messages];
++  assert.equal(messages.length, mids.length);
++  const byId = new Map(messages.map((message) => [message.messageId, message]));
++  const resolved = new Set([cached, ...eligible.slice(0, 100)]);
++  for (const [index, from] of mids.entries()) {
++    assert.equal(byId.get(String(mids.length - index))?.senderName, resolved.has(from) ? `查得-${from}` : "成員");
++  }
++});
++
 +test("an invalidated OpenChat history walk starts no further member lookup batches", async () => {
 +  const gate = Promise.withResolvers();
 +  const started = Promise.withResolvers();
@@ -1805,7 +1871,7 @@ index 3dae4b2..66e09c8 100644
  test("a message the hub fails on does not stop later deliveries in that chat", async () => {
    const base = fakeBase();
    const received = [];
-@@ -407,6 +544,321 @@ test("received stickers become sticker media ids only for numeric ids; animated
+@@ -407,6 +587,321 @@ test("received stickers become sticker media ids only for numeric ids; animated
    ]);
  });
  
@@ -2127,7 +2193,7 @@ index 3dae4b2..66e09c8 100644
  test("a received file becomes a download with a safe name; it is never served as inline media and a preview or taken-back file is not fetchable", async () => {
    const downloads = [];
    const base = fakeBase();
-@@ -501,7 +953,9 @@ test("OpenChat concurrent history shares the walk and retains interleaved live d
+@@ -501,7 +996,9 @@ test("OpenChat concurrent history shares the walk and retains interleaved live d
    assert.equal(await provider.fetchMessageMedia("11"), undefined);
  });
  
@@ -2138,7 +2204,7 @@ index 3dae4b2..66e09c8 100644
    let walks = 0;
    const other = "m" + "t".repeat(32);
    const base = fakeBase({ square: {
-@@ -518,12 +972,94 @@ test("OpenChat paging survives an earlier live delivery and cache refresh; chats
+@@ -518,12 +1015,94 @@ test("OpenChat paging survives an earlier live delivery and cache refresh; chats
    await settle();
    const older = await provider.fetchHistory(channel, 2, newest.cursor);
    assert.deepEqual(older.messages.map((message) => message.messageId), ["1", "2"]);
@@ -2234,7 +2300,7 @@ index 3dae4b2..66e09c8 100644
  test("OpenChat walks deduplicate events, consume retained mutations, and authorize media only on the displayed page", async () => {
    const base = fakeBase({ square: {
      async fetchSquareChatEvents() {
-@@ -565,7 +1101,9 @@ test("OpenChat an invalidated in-flight walk cannot refill history or media afte
+@@ -565,7 +1144,9 @@ test("OpenChat an invalidated in-flight walk cannot refill history or media afte
    assert.equal(provider.mediaOrigins.size, 0);
  });
  
@@ -2245,7 +2311,7 @@ index 3dae4b2..66e09c8 100644
    const base = fakeBase({ square: {
      async fetchSquareChatEvents() { return { events: [squareEvent(1), squareEvent(2, SQUARE, "IMAGE")] }; },
      async getSquareMember() { return { squareMember: { displayName: "成員" } }; },
-@@ -580,7 +1118,7 @@ test("OpenChat own reaction changes and take-backs remain correct on the next ca
+@@ -580,7 +1161,7 @@ test("OpenChat own reaction changes and take-backs remain correct on the next ca
    assert.deepEqual((await provider.fetchHistory(channel, 50)).messages[0].reactions, { counts: { LOVE: 1 }, mine: "LOVE" });
    await provider.react(channel, "1", undefined);
    await provider.unsendMessage(channel, "2");
@@ -2254,7 +2320,7 @@ index 3dae4b2..66e09c8 100644
    const page = await provider.fetchHistory(channel, 50);
    assert.equal(page.messages[0].reactions, undefined);
    assert.equal(page.messages[1].unsent, true);
-@@ -621,7 +1159,9 @@ test("OpenChat live history remains bounded without shifting message-anchored cu
+@@ -621,7 +1202,9 @@ test("OpenChat live history remains bounded without shifting message-anchored cu
    assert.deepEqual((await provider.fetchHistory(channel, 2, latest.cursor)).messages.map((message) => message.messageId), ["5007", "5008"]);
  });
  
@@ -2265,7 +2331,7 @@ index 3dae4b2..66e09c8 100644
    let refreshed = false;
    let release;
    const gate = new Promise((resolve) => { release = resolve; });
-@@ -641,7 +1181,7 @@ test("OpenChat TTL refresh replaces old live reactions with current history whil
+@@ -641,7 +1224,7 @@ test("OpenChat TTL refresh replaces old live reactions with current history whil
    await provider.fetchHistory(channel, 50);
    emit("square:event", squareStatus(1, { 1: 2, 2: { 3: 2 } }));
    emit("square:event", squareStatus(2, { 1: 1, 2: { 3: 1 } }));
@@ -2274,7 +2340,7 @@ index 3dae4b2..66e09c8 100644
    refreshed = true;
    const refreshing = provider.fetchHistory(channel, 50);
    emit("square:event", squareStatus(2, { 1: 0, 2: {} }));
-@@ -650,3 +1190,78 @@ test("OpenChat TTL refresh replaces old live reactions with current history whil
+@@ -650,3 +1233,78 @@ test("OpenChat TTL refresh replaces old live reactions with current history whil
    assert.deepEqual(page.messages[0].reactions, { counts: { LOVE: 3 } }, "history replaces reactions from before this refresh");
    assert.equal(page.messages[1].reactions, undefined, "live removal during refresh still overrides the walked snapshot");
  });
