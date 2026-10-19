@@ -1,5 +1,5 @@
 diff --git a/AGENTS.md b/AGENTS.md
-index 59cf16e..da57c9d 100644
+index 59cf16e..e6b8a39 100644
 --- a/AGENTS.md
 +++ b/AGENTS.md
 @@ -68,8 +68,10 @@ Gate 依 [PLAN.md](PLAN.md) 逐關驗收，不跳關；Gate 0 遠端需存在四
@@ -10,12 +10,12 @@ index 59cf16e..da57c9d 100644
 +11. 機器人 API（`/api/ws`，預設關閉，`api.enabled`）：Bearer Token 認證（只存雜湊、比對用 `timingSafeEqual`、產生後只顯示一次、不入日誌）；升級**不得帶 `Origin`**（網頁不可用此入口），`Host` 不檢查；只開放 `message:send`（僅文字）、`history:fetch`、`scam:check`（見第 12 條）、`chat:admins:get`（見第 13 條）、`profile:get`（只回本帳號自己的 profile，不呼叫 LINE）、`ping`，其餘一律 `UNKNOWN_TYPE`；只能存取 `api.chats` 清單內的聊天室（空清單視為設定錯誤，未列出者一律 `UNKNOWN_CHAT`）；不給 `chat:read`、登入／登出、`channels:refresh`、媒體與貼圖發送；連線不重播舊訊息、不收 `read`；所有機器人合計 `api.sendsPerMinute`（≤120/分鐘）加每連線 `limits.sendsPerSecond`；同時最多 4 個連線；重新產生／撤銷 Token 立即中斷所有機器人連線。Token 的產生與撤銷只接受一般 `/ws` 連線（實務上只有取得瀏覽器 cookie 的本機 CLI 會送；網頁不提供此 UI），機器人連線無此權限。
  12. 詐騙機率分析（2026-10 小語裁示，`jev.token` 有值才啟用）：金鑰只用於送往 `https://api.typesafe.ai/v1/systemone` 的 Bearer 標頭（拒絕重新導向），不送網頁（網頁只收 `scam:state { enabled }`）、不入日誌與錯誤；`scam:check` 網頁每連線每分鐘 10 次；機器人（2026-10 裁示開放）只限 `api.chats` 內的訊息，所有機器人連線合計每分鐘 10 次，不收 `scam:state`；只送指定的那一則、伺服器已顯示、非本帳號、未收回、非系統訊息的**伺服器快取文字**，不採用用戶端傳來的文字，不送寄件者或聊天室；回應 fail-closed（無 0–1 機率即失敗），失敗對外只回 generic `SCAM_CHECK_FAILED`；結果只送給要求的連線，網頁標示為模型估計、僅供參考。
 +13. OpenChat 管理員查詢（`chat:admins:get`，只限機器人）：僅 `api.chats` 內已知 `square`，所有機器人合計每分鐘 10 次；`hello.capabilities` 宣告 `"chat:admins"`。adapter 以 `getSquareChatMembers` 走完所有 continuationToken，只取 `membershipState: JOINED`（2）的 `ADMIN`（1）／`CO_ADMIN`（2），以 `getSquareChat.squareChatMember.squareMemberMid` 確認自己的身分且須出現在完整名單中。不得使用發言者角色快取或回傳部分結果；缺漏、循環、1000 頁上限或上游失敗回 generic `CHAT_ADMINS_FAILED`；非社群回 `CHAT_ADMINS_UNSUPPORTED`。回應 `chat:admins { requestId, chatId, admins, ownMemberId }` 只給要求者，generation 阻止登出／換帳號舊結果。`scam:check` 未知自己社群身分時也須先取得成員資料，失敗不呼叫付費分析，排除手機與機器人自己的訊息。LINE 無跨頁原子 snapshot，文件須保留此限制與未實帳號驗證聲明。
-+14. 管理員標記：同一機器人連線經 `chat:admins:get` 查證的名單，可用 `message:send.mentions` 標記尚未發言者；僅限該聊天室，重新查詢開始即撤銷舊授權，登出／換帳號清空。不得放行任意 ID、跨聊天室或其他連線的名單。網頁仍只允許已知發言者。
++14. 管理員標記：同一機器人連線最後發起且成功完成的 `chat:admins:get` 查證名單，可用 `message:send.mentions` 標記尚未發言者；僅限該聊天室。新查詢開始即撤銷舊名單及尚未完成的舊查詢授權資格，舊成功結果回 `CHAT_ADMINS_FAILED`，不得在新查詢等待中、成功或失敗後恢復授權。登出／換帳號清空全部授權。不得放行任意 ID、跨聊天室或其他連線的名單。網頁仍只允許已知發言者。
  
  內部日誌也不得包含憑證、token、QR URL、PIN 或 key material；不得直接 dump 套件錯誤物件、session 或登入 payload。圖片／貼圖／影片／語音位元組一律走 HTTP，WS 不傳位元組；收到的檔案只以 `file-<id>` 附件下載（`Content-Disposition: attachment`、`application/octet-stream`，不嗅探、不內嵌），規則同收到的媒體。訊息不落盤；每頻道最多 500 則，同 messageId 去重，編輯覆寫快取。LINE listen 失效採退避重啟；QR 失敗不自動循環，須由使用者動作重新產生。
  
 diff --git a/PLAN.md b/PLAN.md
-index 49acd5b..79c4f0a 100644
+index 49acd5b..a330ede 100644
 --- a/PLAN.md
 +++ b/PLAN.md
 @@ -150,17 +150,21 @@
@@ -23,7 +23,7 @@ index 49acd5b..79c4f0a 100644
  > v1.17（小語裁示：取得個人 ID，協定版本仍為 2）：新增 Client → Server `profile:get`（`{ requestId }`），網頁與機器人連線皆可用，回 `profile`（`{ requestId, profile }`，內容同 `auth:ready` 的 `profile`：`userId`、`displayName`、`pictureId?`），只送給要求的連線；只讀伺服器登入時取得的資料、不呼叫 LINE，未登入或缺 `requestId` 回 `INVALID_REQUEST`，與歷史共用每連線每秒 10 次的額度。機器人不受 `api.chats` 限制（不涉及任何聊天室）。網頁在左上角自己的名稱列右鍵（觸控長按）可顯示並複製自己的 ID。
  
 +> v1.18（NekoGuard companion extension，協定版本仍為 2）：僅機器人新增 `chat:admins:get { requestId, chatId }`，限 `api.chats` 內已知 OpenChat（`square`），所有機器人合計每分鐘 10 次；`hello.capabilities` 含 `"chat:admins"`。只向要求者回 `chat:admins { requestId, chatId, admins: [{ userId, displayName, role: "admin" 或 "coAdmin" }], ownMemberId }`。adapter 每次以 `getSquareChatMembers` 完整分頁、篩選 JOINED 的 ADMIN／CO_ADMIN，自己的成員 id 來自 `getSquareChat.squareChatMember` 且確認在成員名單內，不採用發言者快取。非社群回 `CHAT_ADMINS_UNSUPPORTED`；缺漏、循環、1000 頁上限或上游錯誤回 generic `CHAT_ADMINS_FAILED`，不回部分名單。generation 作廢登出／換帳號舊結果。`scam:check` 亦先解析未知的社群自己身分，排除手機／機器人自己的訊息，失敗不呼叫付費分析。LINE 無跨頁原子 snapshot；尚未真實帳號實測。
-+> 管理員通知授權：同一機器人連線可標記自己最近一次成功 `chat:admins:get` 回傳、同聊天室的管理員，即使未曾發言。新查詢開始先撤銷該聊天室舊名單；登出／換帳號清除全部授權，其他目標仍沿用發言者驗證。外掛應在通知前重新取得角色。
++> 管理員通知授權：同一機器人連線可標記同聊天室最後發起且成功完成的 `chat:admins:get` 回傳的管理員，即使未曾發言。新查詢開始先撤銷舊名單及尚未完成的舊查詢授權資格；舊成功結果回 `CHAT_ADMINS_FAILED`，不能在新查詢等待中、成功或失敗後恢復授權。登出／換帳號清除全部授權，其他目標仍沿用發言者驗證。外掛應在通知前重新取得角色。
 +
  ### Server → Client
  
@@ -59,7 +59,7 @@ index 49acd5b..79c4f0a 100644
  
  ### HTTP
 diff --git a/README.en.md b/README.en.md
-index 6b97c31..d07c1d1 100644
+index 6b97c31..0555b59 100644
 --- a/README.en.md
 +++ b/README.en.md
 @@ -164,18 +164,22 @@ Lets your own programs (bots) send and receive messages. **Disabled by default**
@@ -83,12 +83,12 @@ index 6b97c31..d07c1d1 100644
  - `scam:check` has its own limit of 10 per minute across all bots (separate from the web pages' budget); exceeding it returns `RATE_LIMITED`.
 +- `chat:admins:get` is limited to 10 per minute across all bots (`RATE_LIMITED`); support is advertised in `hello.capabilities` as `"chat:admins"`. Non-OpenChat returns `CHAT_ADMINS_UNSUPPORTED`; missing metadata, repeated pagination tokens, more than 1000 pages or LINE failure returns generic `CHAT_ADMINS_FAILED`, never a partial list. Logout/account changes discard stale results. LINE offers no atomic cross-page snapshot, so membership changes during a scan can race; real LINE account behavior has not been exercised.
 +- In OpenChat, `scam:check` first resolves complete membership if own identity is unknown; failure never calls paid analysis. Own phone and bot messages are rejected. Actual mentions still use `message:send.mentions` (up to 20, UTF-16 offsets) and `replyTo`.
-+- Admins returned in `chat:admins` may be mentioned even if they have never spoken, but only by the **same bot connection**, in the same chat, using its latest successful lookup. Starting another lookup revokes the old list; logout/account changes clear all grants. Arbitrary IDs remain forbidden. Query again before notifying to avoid stale roles.
++- Admins returned in `chat:admins` may be mentioned even if they have never spoken, but only by the **same bot connection**, in the same chat, after its latest-started lookup succeeds. Starting another lookup immediately revokes the old list and supersedes any lookup still in flight; a superseded success returns `CHAT_ADMINS_FAILED` and cannot restore grants while the newer lookup is pending or after it succeeds or fails. Logout/account changes clear all grants. Arbitrary IDs remain forbidden. Query again before notifying to avoid stale roles.
  - Bots speak through **your personal account**. Frequent or mechanical sending may trigger LINE's risk controls. Set conservative limits and use a secondary account first.
  
  ```js
 diff --git a/README.ja.md b/README.ja.md
-index a6e80b5..f0523d9 100644
+index a6e80b5..f414208 100644
 --- a/README.ja.md
 +++ b/README.ja.md
 @@ -164,18 +164,22 @@ HTTP：`GET /media/:mediaId`（スタンプ、スタンプパックのアイコ
@@ -112,12 +112,12 @@ index a6e80b5..f0523d9 100644
  - `scam:check` には別途、全ボット合計で毎分 10 回の上限があります（Web ページの枠とは別）。超過すると `RATE_LIMITED` を返します。
 +- `chat:admins:get` は全ボット合計で毎分 10 回（超過は `RATE_LIMITED`）。対応時は `hello.capabilities` に `"chat:admins"` を含みます。OpenChat 以外は `CHAT_ADMINS_UNSUPPORTED`。メタデータ不足、ページトークンの循環、1000 ページ超過、LINE の失敗は汎用の `CHAT_ADMINS_FAILED` とし、不完全な一覧は返しません。ログアウトやアカウント変更で古い結果を破棄します。LINE にページ間の原子的 snapshot はなく、走査中のメンバー変更は競合し得ます。実際の LINE アカウントでは未検証です。
 +- OpenChat の `scam:check` は自分の ID が不明なら先に完全なメンバー情報を取得し、失敗時は有料分析を呼びません。スマートフォンやボット自身のメッセージは拒否します。実際のメンションは引き続き `message:send.mentions`（最大 20 人、UTF-16 位置）と `replyTo` を使います。
-+- `chat:admins` が返した管理者は未発言でもメンションできますが、**同じボット接続・同じチャット**の直近の成功した取得結果に限ります。再取得の開始時に古い許可を破棄し、ログアウト・アカウント変更で全許可を消去します。任意の ID は許可されません。通知前に再取得してください。
++- `chat:admins` が返した管理者は未発言でもメンションできますが、**同じボット接続・同じチャット**で最後に開始した取得が成功した場合に限ります。再取得の開始時に古い許可と処理中の以前の取得の権限を直ちに破棄します。以前の取得が後から成功しても `CHAT_ADMINS_FAILED` を返し、新しい取得の待機中・成功後・失敗後のいずれも古い許可を復活させません。ログアウト・アカウント変更で全許可を消去します。任意の ID は許可されません。通知前に再取得してください。
  - ボットは**あなたの個人アカウント**として発言します。頻繁な送信や機械的な送信は LINE の不正利用対策に検知される可能性があります。上限は控えめに設定し、まずサブアカウントを使ってください。
  
  ```js
 diff --git a/README.md b/README.md
-index 7704eb9..e218f0b 100644
+index 7704eb9..d334a3e 100644
 --- a/README.md
 +++ b/README.md
 @@ -164,18 +164,22 @@ HTTP：`GET /media/:mediaId`（貼圖、貼圖包圖示、大頭照與原圖、
@@ -141,12 +141,12 @@ index 7704eb9..e218f0b 100644
  - `scam:check` 另有所有機器人合計每分鐘 10 次的上限（與網頁的額度分開），超過回 `RATE_LIMITED`。
 +- `chat:admins:get` 所有機器人合計每分鐘 10 次，超過回 `RATE_LIMITED`；`hello.capabilities` 含 `"chat:admins"` 才支援。非 OpenChat 回 `CHAT_ADMINS_UNSUPPORTED`；資料缺漏、分頁循環、超過 1000 頁或 LINE 失敗回 generic `CHAT_ADMINS_FAILED`，不回不完整名單。登出／換帳號會丟棄舊查詢結果。LINE 不提供跨頁原子快照，掃描期間的成員異動仍可能競態；未對真實 LINE 帳號實測。
 +- `scam:check` 在 OpenChat 尚無自己的成員身分時先取得完整成員資料，失敗不呼叫付費分析；手機與機器人自己的訊息一律拒絕。發送真正標記仍使用 `message:send.mentions`（最多 20 個、UTF-16 位置）與 `replyTo`。
-+- `chat:admins` 回傳的管理員即使尚未發言，也能由**同一條機器人連線**以 `message:send.mentions` 標記；授權限同一聊天室、最近一次成功查詢的名單。再次查詢會先撤銷舊名單，登出／換帳號清除全部授權。不是任意 ID 白名單；通知前應重新查詢，避免使用過時角色。
++- `chat:admins` 回傳的管理員即使尚未發言，也能由**同一條機器人連線**以 `message:send.mentions` 標記；授權限同一聊天室、最後發起且成功完成的查詢。再次查詢會立即撤銷舊名單與尚未完成的舊查詢授權資格；舊查詢即使較晚成功也只回 `CHAT_ADMINS_FAILED`，不能在新查詢等待中、成功或失敗後恢復舊授權。登出／換帳號清除全部授權。不是任意 ID 白名單；通知前應重新查詢，避免使用過時角色。
  - 機器人以**你的真人帳號**發言，頻繁或機械式的發送可能觸發 LINE 風控。請保守設定上限，並先用次要帳號。
  
  ```js
 diff --git a/SECURITY.md b/SECURITY.md
-index c3e123e..7d832c7 100644
+index c3e123e..e87be66 100644
 --- a/SECURITY.md
 +++ b/SECURITY.md
 @@ -127,8 +127,10 @@ approval, and a regression against any of them is treated as a vulnerability.
@@ -157,7 +157,7 @@ index c3e123e..7d832c7 100644
 +| A bot may send only `message:send` (text only), `history:fetch`, `scam:check` (see the scam check section), `chat:admins:get` (OpenChat only), `profile:get` (this account's own profile, the same one `auth:ready` carries; no LINE request) and `ping`; everything else, including login, logout, read receipts, stickers and media, is `UNKNOWN_TYPE`. It can reach only the chats in `api.chats` (anything else is `UNKNOWN_CHAT`), receives only live messages (no replay, no read positions) and never receives media bytes. | `src/ws/hub.ts`, `src/ws/requests.ts` |
  | Sending is limited per connection (`limits.sendsPerSecond`, at most 5/s) and across all bots (`api.sendsPerMinute`, at most 120/min). | `src/ws/hub.ts`, `src/limit.ts` |
 +| `chat:admins:get` is bot-only, restricted to known `square` chats in `api.chats`, limited to 10 requests/minute across all bots, and advertised by `hello.capabilities: ["chat:admins"]`. It returns fresh, completely paginated JOINED administrators/co-administrators plus this account's OpenChat member id only to the requester. Missing identity/metadata, repeated pagination tokens, a 1000-page ceiling or upstream failure is generic `CHAT_ADMINS_FAILED`, never a partial list; other chat kinds get `CHAT_ADMINS_UNSUPPORTED`. Session generation discards stale results on logout/account changes. LINE does not provide an atomic snapshot across pages. | `src/ws/hub.ts`, `src/line/provider.ts` |
-+| Bots may mention otherwise unseen administrators only from their own connection's latest successful `chat:admins:get` result for that exact chat. A new lookup first revokes that chat's previous grant; logout/account changes clear all grants. Existing speaker-only validation remains for pages and other targets. | `src/ws/hub.ts` |
++| Bots may mention otherwise unseen administrators only after their own connection's latest-started `chat:admins:get` succeeds for that exact chat. A new lookup immediately revokes the previous grant and supersedes in-flight lookups; superseded successes return `CHAT_ADMINS_FAILED` and never restore grants while the latest lookup is pending or after it succeeds or fails. Logout/account changes clear all grants. Existing speaker-only validation remains for pages and other targets. | `src/ws/hub.ts` |
  
  ### Scam check (TypeSafe Jev, off by default)
  
@@ -280,7 +280,7 @@ index 9307238..a67a356 100644
  export interface Mention {
    userId: string;
 diff --git a/src/ws/hub.ts b/src/ws/hub.ts
-index 4ae6a53..9997bf2 100644
+index 4ae6a53..105e445 100644
 --- a/src/ws/hub.ts
 +++ b/src/ws/hub.ts
 @@ -12,7 +12,7 @@ import type { Channel, ChannelKind, Message, Reactions, ReadPosition } from "../
@@ -360,7 +360,7 @@ index 4ae6a53..9997bf2 100644
        const analysis = await scam.analyzeScam(message.text);
        if (account !== generation || login.state !== "ready") return;
        send(socket, { type: "scam:result", requestId, chatId, messageId, analysis });
-@@ -490,6 +504,30 @@ export function createHub(options: HubOptions): Hub {
+@@ -490,6 +504,33 @@ export function createHub(options: HubOptions): Hub {
      }
    }
  
@@ -372,14 +372,17 @@ index 4ae6a53..9997bf2 100644
 +    if (login.state !== "ready" || !channel || !botScope.has(chatId)) return fail(socket, "UNKNOWN_CHAT", requestId);
 +    if (channel.kind !== "square") return fail(socket, "CHAT_ADMINS_UNSUPPORTED", requestId);
 +    const account = generation;
-+    botAdminMentions.get(socket)?.delete(chatId);
++    const chats = botAdminMentions.get(socket) ?? new Map<string, ReadonlySet<string>>();
++    // Each lookup immediately replaces the grant, including any lookup still in flight.
++    const admins = new Set<string>();
++    chats.set(chatId, admins);
++    botAdminMentions.set(socket, chats);
 +    try {
 +      const result = await provider.fetchChatAdmins({ channelId: chatId, kind: channel.kind });
 +      if (account !== generation || login.state !== "ready") return;
++      if (botAdminMentions.get(socket)?.get(chatId) !== admins) return fail(socket, "CHAT_ADMINS_FAILED", requestId);
 +      ownSquareSenders.set(chatId, result.ownMemberId);
-+      const chats = botAdminMentions.get(socket) ?? new Map<string, ReadonlySet<string>>();
-+      chats.set(chatId, new Set(result.admins.map((admin) => admin.userId)));
-+      botAdminMentions.set(socket, chats);
++      for (const admin of result.admins) admins.add(admin.userId);
 +      send(socket, { type: "chat:admins", requestId, chatId, ...result });
 +    } catch (error) {
 +      if (account !== generation) return;
@@ -391,7 +394,7 @@ index 4ae6a53..9997bf2 100644
    /** Local only (no LINE request): the profile LINE gave at sign-in. */
    function handleProfile(socket: WebSocket, frame: Record<string, unknown>): void {
      const requestId = requestIdOf(frame);
-@@ -544,6 +582,7 @@ export function createHub(options: HubOptions): Hub {
+@@ -544,6 +585,7 @@ export function createHub(options: HubOptions): Hub {
        seenReads.clear();
        readFetches.clear();
        ownSquareSenders.clear();
@@ -399,7 +402,7 @@ index 4ae6a53..9997bf2 100644
        status = "starting";
      }
      broadcastAll({ type: "auth:state", state });
-@@ -579,7 +618,7 @@ export function createHub(options: HubOptions): Hub {
+@@ -579,7 +621,7 @@ export function createHub(options: HubOptions): Hub {
      watch(socket, "bot");
      const sendLimiter = new SlidingWindowLimiter(config.limits.sendsPerSecond, 1000);
      const historyLimiter = new SlidingWindowLimiter(HISTORY_PER_SECOND, 1000);
@@ -408,7 +411,7 @@ index 4ae6a53..9997bf2 100644
      send(socket, { type: "auth:state", state: login.state });
      send(socket, { type: "status", state: status });
      if (login.state === "ready") {
-@@ -607,6 +646,10 @@ export function createHub(options: HubOptions): Hub {
+@@ -607,6 +649,10 @@ export function createHub(options: HubOptions): Hub {
            if (!botScamLimiter.allow()) fail(socket, "RATE_LIMITED", requestIdOf(frame as Record<string, unknown>));
            else void handleScamCheck(socket, frame as Record<string, unknown>, botScope);
            return;
@@ -472,7 +475,7 @@ index 31fd7a2..9518ee1 100644
    const base = header(frame);
    if (!base) return { ok: false, ...(requestIdOf(frame) ? { requestId: requestIdOf(frame)! } : {}) };
 diff --git a/test/hub.test.mjs b/test/hub.test.mjs
-index e3ebc41..a3ab3f2 100644
+index e3ebc41..78813b9 100644
 --- a/test/hub.test.mjs
 +++ b/test/hub.test.mjs
 @@ -5,6 +5,7 @@ import { createServer } from "node:net";
@@ -483,7 +486,7 @@ index e3ebc41..a3ab3f2 100644
  import { createWebServer } from "../dist/http/server.js";
  import { createHub } from "../dist/ws/hub.js";
  import { ApiTokenStore } from "../dist/http/apiToken.js";
-@@ -1571,3 +1572,147 @@ test("a connection that stops answering pings is closed by the next heartbeat; o
+@@ -1571,3 +1572,192 @@ test("a connection that stops answering pings is closed by the next heartbeat; o
    assert.equal(healthy.socket.readyState, WebSocket.OPEN);
    assert.equal(pings, 2);
  });
@@ -630,6 +633,51 @@ index e3ebc41..a3ab3f2 100644
 +  await delay(20);
 +  assert.equal((await send(bot, "after-logout")).code, "INVALID_REQUEST");
 +  assert.equal(env.provider.calls.filter((call) => call[0] === "text").length, 1);
++});
++
++test("only the latest started administrator lookup can grant mention permission", async (t) => {
++  for (const scenario of ["latest succeeds first", "latest fails first", "older finishes while latest is pending"]) {
++    await t.test(scenario, async (t) => {
++      const env = await adminEnv(t);
++      const bot = await env.open();
++      const started = [Promise.withResolvers(), Promise.withResolvers()];
++      const gates = [Promise.withResolvers(), Promise.withResolvers()];
++      const latestAdmin = { ...adminResult.admins[0], userId: `p${"2".repeat(32)}` };
++      let calls = 0;
++      env.provider.fetchChatAdmins = async () => {
++        const index = calls++;
++        started[index].resolve();
++        await gates[index].promise;
++        if (index === 1 && scenario === "latest fails first") throw new Error("unavailable");
++        return index === 0 ? adminResult : { ...adminResult, admins: [latestAdmin] };
++      };
++      t.after(() => { for (const gate of gates) gate.resolve(); });
++      for (const [index, requestId] of ["older", "latest"].entries()) {
++        bot.socket.send(JSON.stringify({ type: "chat:admins:get", requestId, chatId: ADMIN_CHAT }));
++        await started[index].promise;
++      }
++      if (scenario === "older finishes while latest is pending") {
++        gates[0].resolve();
++        assert.equal((await bot.until((frame) => frame.requestId === "older")).code, "CHAT_ADMINS_FAILED");
++        bot.socket.send(JSON.stringify({ type: "message:send", requestId: "pending-denied", chatId: ADMIN_CHAT, text: "@管理員", mentions: [{ userId: adminResult.admins[0].userId, start: 0, end: 4 }] }));
++        assert.equal((await bot.until((frame) => frame.requestId === "pending-denied")).code, "INVALID_REQUEST");
++      }
++      gates[1].resolve();
++      const latest = await bot.until((frame) => frame.requestId === "latest");
++      assert.equal(latest.code ?? latest.type, scenario === "latest fails first" ? "CHAT_ADMINS_FAILED" : "chat:admins");
++      gates[0].resolve();
++      assert.equal((await bot.until((frame) => frame.requestId === "older")).code, "CHAT_ADMINS_FAILED");
++      for (const [requestId, userId, expected] of [
++        ["former-admin", adminResult.admins[0].userId, "INVALID_REQUEST"],
++        ["current-admin", latestAdmin.userId, scenario === "latest fails first" ? "INVALID_REQUEST" : "sent"],
++      ]) {
++        bot.socket.send(JSON.stringify({ type: "message:send", requestId, chatId: ADMIN_CHAT, text: "@管理員", mentions: [{ userId, start: 0, end: 4 }] }));
++        const response = await bot.until((frame) => frame.requestId === requestId);
++        assert.equal(response.code ?? response.type, expected);
++      }
++      assert.equal(env.provider.calls.filter((call) => call[0] === "text").length, scenario === "latest fails first" ? 0 : 1);
++    });
++  }
 +});
 diff --git a/test/provider.test.mjs b/test/provider.test.mjs
 index 3dae4b2..84b7858 100644
