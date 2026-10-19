@@ -1,12 +1,14 @@
 diff --git a/AGENTS.md b/AGENTS.md
-index 59cf16e..8ca4d78 100644
+index 59cf16e..6e1f4a0 100644
 --- a/AGENTS.md
 +++ b/AGENTS.md
-@@ -63,13 +63,20 @@ Gate 依 [PLAN.md](PLAN.md) 逐關驗收，不跳關；Gate 0 遠端需存在四
+@@ -62,14 +62,21 @@ Gate 依 [PLAN.md](PLAN.md) 逐關驗收，不跳關；Gate 0 遠端需存在四
+ 2. QR URL 與 PIN **一次性顯示、不入日誌、不落盤**。
  3. `session.json` 含憑證與 E2EE key material：chmod **600**、列入 `.gitignore`、不入日誌、不分享。
  4. 網頁 WS 升級須 `Origin`（`http`／`https`，後者供 TLS 反向代理／自訂網域）的主機部分等於 `Host` 標頭並帶瀏覽器 cookie；其餘來源拒絕升級。
- 5. 每連線頻率限制：`message:send` ≤ 5/秒（收回 `message:unsend` 共用此額度，且只接受伺服器已顯示、本帳號所發的訊息，機器人不可用；回應 `message:react` 也共用此額度，只接受伺服器已顯示、未收回的訊息，機器人不可用）；`POST /media/upload` 圖片 ≤ 10MB/檔、影片 ≤ 50MB/檔（`limits.uploadVideoMaxBytes`）、≤ 5 次/分鐘；frame ≤ 256KB。
+-5. 每連線頻率限制：`message:send` ≤ 5/秒（收回 `message:unsend` 共用此額度，且只接受伺服器已顯示、本帳號所發的訊息，機器人不可用；回應 `message:react` 也共用此額度，只接受伺服器已顯示、未收回的訊息，機器人不可用）；`POST /media/upload` 圖片 ≤ 10MB/檔、影片 ≤ 50MB/檔（`limits.uploadVideoMaxBytes`）、≤ 5 次/分鐘；frame ≤ 256KB。
 -6. 媒體快取上限預設 200MB（LRU）；收到的媒體只能請求已見過的訊息（`msg-<id>`），單檔上限 `limits.downloadMaxBytes`（預設 50MB），類型一律以位元組內容判斷且不供應 SVG／HTML；訊息媒體不得被瀏覽器快取。
++5. 每連線頻率限制：`message:send` ≤ 5/秒（收回 `message:unsend` 共用此額度，且只接受伺服器已顯示、本帳號所發的訊息，機器人不可用；回應 `message:react` 也共用此額度，只接受伺服器已顯示、未收回的訊息，機器人不可用）；`POST /media/upload` 圖片 ≤ 10MB/檔、影片 ≤ 50MB/檔（`limits.uploadVideoMaxBytes`）、≤ 5 次/分鐘；frame ≤ 256KB。上傳暫存的十分鐘有效期使用單調時間，於新增／讀取時清除到期項目；成功發送後移除、登出清空，既有容量限制不變。
 +6. 媒體快取上限預設 200MB（LRU）；收到的媒體只能請求已見過的訊息（`msg-<id>`），單檔上限 `limits.downloadMaxBytes`（預設 50MB），類型一律以位元組內容判斷且不供應 SVG／HTML；訊息媒體不得被瀏覽器快取。貼圖、大頭照、貼圖包圖示與 LINE 表情貼的 CDN 回應維持 2 MiB 上限：宣告超限即取消，未宣告或低報大小時也須逐塊計數，超限立即停止，不得先完整下載再拒絕。貼圖 metadata 維持解碼後 1,000,000 個 UTF-16 單位上限並於串流中執行；不得誤改為 bytes 限制，須保留跨塊 UTF-8／BOM／結尾解碼與既有 ID 區間 fallback。拒絕的 CDN 回應須盡力取消未使用本文，取消失敗不得覆寫既有錯誤或阻止 fallback。
  7. 輸入驗證：`chatId` 格式（`u／c／r／s／m` 開頭；OpenChat 為 `m`）、`text` ≤ 8000 字、`limit` ≤ 100、`packageId`／`stickerId` 限正整數、上傳媒體以內容判斷（圖片 PNG／JPEG／GIF；影片 MP4／MOV，以 `ftyp` 品牌辨識，聲稱的 Content-Type 只用來選擇大小上限；影片長度取自 `moov/mvhd`，不採用瀏覽器給的值）。
  8. 對外一律 generic 錯誤；內部錯誤只入本地日誌。
@@ -35,10 +37,10 @@ index 59cf16e..8ca4d78 100644
  
  LINE operation 與連線注意事項：linejs 未記載多數 operation 的參數排列，`SEND_CHAT_CHECKED`（手機已讀）只取 `param1` 且須為伺服器已知聊天室；群組／個人資料／聊天室成員變動不解析參數，只觸發節流的頻道清單重新整理（3 秒合併、最多每 30 秒一次），不得改成依參數猜測內容。頻道清單的最後一則訊息（`Channel.lastMessage`）是預覽，不登記媒體來源，不能藉此下載。WS 心跳：伺服器以協定層 Ping 每 30 秒檢查、兩輪無回應即關閉；網頁 `ping` 需 10 秒內收到 `pong`，回到前景立即探測。斷線記錄（網頁主控台、服務日誌 `WS_CLOSED`）只可含時間、close code、截短的 reason 與前後景狀態，不得含標頭、cookie 或 Token。
 diff --git a/PLAN.md b/PLAN.md
-index 49acd5b..0b37fe3 100644
+index 49acd5b..08b187a 100644
 --- a/PLAN.md
 +++ b/PLAN.md
-@@ -144,23 +144,58 @@
+@@ -144,23 +144,60 @@
  
  > 實作補完（協定版本仍為 2）：登出／換帳號以 session generation 作廢歷史、發送、回應、收回、已讀與頻道查詢的舊結果；歷史重新載入也同步清除已取消的回應。OpenChat 歷史採同聊天室 single-flight、時間＋訊息 id 錨點，快取最多 5 個聊天室各 5000 則、10 分鐘，合併即時訊息與狀態，過期時重新取得回應，僅已提供頁面的訊息授權媒體。網頁搜尋維持即時更新並跨聊天室依時間排序；初次歷史失敗可重試，回應更新不重建媒體 DOM，登出清除搜尋、私人畫面與通知。隔離測試與無頭靜音瀏覽器已驗證；尚未對本次變動重新進行真實 LINE Gate 驗收。
  
@@ -67,6 +69,8 @@ index 49acd5b..0b37fe3 100644
 +> 貼圖解析有界掃描：metadata 與商品 ID 區間收滿每包既有的 200 筆輸出後即停止尾端掃描，保留無效資料略過、順序／重複項目與後續貼圖包。實際 Provider＋WebSocket 驗證小型及五萬筆 fixture 完整回覆不變；本機基準分別量測正規化與 JSON.parse＋正規化，不宣稱免除 JSON 解析或實網延遲。268 項測試通過，未連接真實 LINE。
 +
 +> 已讀快照快取計時：十秒短期共用改用單調經過時間，校時前跳不重查、回撥不延長過期資料；即時已讀合併與登入隔離不變。實際 WebSocket 歷史開啟 fixture 驗證到期前重用、精確到期更新與即時位置保留；269 項測試通過，未連接真實 LINE。
++
++> 上傳暫存計時：十分鐘有效期改用單調時間，避免校時前跳讓新上傳失效、回撥讓過期 token 繼續可用。實際 HTTP 上傳＋WebSocket 發送驗證期限前可用、精確到期拒絕、成功消耗後不可重用，受控 Provider 收到完整圖片位元組。新增／讀取時回收到期項目與容量限制不變；270 項測試通過，未連接真實 LINE。
 +
  > v1.15（小語裁示：JEV 詐騙分析，協定版本仍為 2）：`config.yaml` 新增選用區段 `jev`（`token`：TypeSafe API 金鑰，有值才啟用；`model`：預設 `jev-1.13.0`）。新增 Server → Client `scam:state`（`{ enabled }`，連線即送、只給網頁，不含金鑰）與 `scam:result`（`{ requestId, chatId, messageId, analysis: { probability, tactic?: { kind, confidence } } }`，只送給要求的連線），Client → Server `scam:check`（`{ requestId, chatId, messageId }`，僅網頁、每連線每分鐘 10 次）。伺服器只接受已顯示、非本帳號、未收回、已解密、非系統訊息的文字訊息，以自己快取的文字經 `src/jev/` 呼叫 `POST https://api.typesafe.ai/v1/systemone`（Noul 題問是否為詐騙、Choice 題問最接近的手法；題目用英文，因官方說明英文準確度最佳），回應 fail-closed；未設定金鑰回 `SCAM_CHECK_UNAVAILABLE`，失敗回 `SCAM_CHECK_FAILED`。網頁對別人的文字訊息右鍵出現「詐騙機率分析」，以官方範例門檻分級（> 0.8 高度疑似、≤ 0.2 不太像、其間無法確定）並註明為模型估計、文字已送至 TypeSafe。尚未以有效金鑰實測真實分析結果。
  
@@ -98,7 +102,7 @@ index 49acd5b..0b37fe3 100644
  | `channels` | `{ channels: Channel[] }`（snapshot，連線即送、變動重送） |
  | `messages` | `{ chatId, messages: Message[] }`（連線時快照，每個聊天室一個影格；舊訊息，不計未讀） |
  | `message` | `{ message: Message }`（即時新訊息） |
-@@ -190,6 +225,7 @@
+@@ -190,6 +227,7 @@
  | `message:react` | `{ requestId, chatId, messageId, reaction: "NICE"｜"LOVE"｜"FUN"｜"AMAZING"｜"SAD"｜"OMG"｜null }`（僅網頁，與 `message:send` 共用頻率上限） |
  | `scam:check` | `{ requestId, chatId, messageId }`（網頁每連線每分鐘 10 次；機器人限 `api.chats`、所有機器人合計每分鐘 10 次；只接受別人傳來、已顯示、未收回的文字訊息） |
  | `profile:get` | `{ requestId }`（自己的 `profile`；網頁與機器人皆可，不呼叫 LINE） |
@@ -106,7 +110,7 @@ index 49acd5b..0b37fe3 100644
  | `channels:refresh` | `{}` |
  | `api:token:create` / `api:token:revoke` | `{}`（產生或撤銷機器人 Token，並中斷所有機器人連線） |
  | `ping` | `{}` |
-@@ -197,7 +233,7 @@
+@@ -197,7 +235,7 @@
  ### 機器人 API（`/api/ws`）
  - 升級條件：`api.enabled`、**無 `Origin`**、`Authorization: Bearer linejs_…` 符合目前 Token；否則 403（同時超過 4 個連線回 429）。`Host` 不限制（同網頁）。
  - 連線時收到 `hello`、`auth:state`、`status`、`auth:ready`、僅含 `api.chats` 的 `channels`；之後只有這些聊天室的 `message`／`message:edit`。不重播、不給 `read`／`update:available`／`api:state`。
@@ -116,10 +120,10 @@ index 49acd5b..0b37fe3 100644
  
  ### HTTP
 diff --git a/README.en.md b/README.en.md
-index 6b97c31..220e9bf 100644
+index 6b97c31..6135325 100644
 --- a/README.en.md
 +++ b/README.en.md
-@@ -26,7 +26,21 @@ flowchart LR
+@@ -26,7 +26,23 @@ flowchart LR
  
  The backend binds only to `127.0.0.1` by default (configurable in `config.yaml`; see “Configuration”), on port `3789` by default. The backend builds with `tsc` into `dist/`; the frontend builds with Vite into `dist/web/`. Messages are stored only in memory (up to 500 per channel, deduplicated by id, with edits overwriting existing messages), without a database. Stickers, profile pictures, and received media are cached by the backend in an LRU cache (200MB by default) and served over HTTP on the same port.
  
@@ -139,10 +143,12 @@ index 6b97c31..220e9bf 100644
 +Sticker metadata and owned-product ID ranges stop scanning once the existing 200-entry output limit per package is reached. ID order, duplicate entries and subsequent packages are preserved.
 +
 +Read snapshots requested when the web page opens history retain their ten-second sharing window, measured by monotonic elapsed time rather than wall-clock time. Live read positions still merge during that window, and logout discards the old account's snapshots.
++
++Pending uploads remain usable for ten minutes of monotonic elapsed time, unaffected by wall-clock corrections. Expired items are still pruned on insertion or lookup, successful sends consume them, logout clears them, and existing capacity limits are unchanged.
  
  ## Requirements
  
-@@ -164,18 +178,25 @@ Lets your own programs (bots) send and receive messages. **Disabled by default**
+@@ -164,18 +180,25 @@ Lets your own programs (bots) send and receive messages. **Disabled by default**
  | Bot → Service | `history:fetch` | `{ requestId, chatId, limit?, before? }`: the same pagination as the web interface, without a read-receipt snapshot |
  | Bot → Service | `scam:check` | `{ requestId, chatId, messageId }`: check with Jev a text message **from someone else** in `api.chats` that the service has shown (received live or returned by `history:fetch`); the server sends its own cached text. Requires `jev.token` (otherwise `SCAM_CHECK_UNAVAILABLE`); 10 per minute across all bots, each billed by TypeSafe. Success returns `scam:result { requestId, chatId, messageId, analysis: { probability, tactic? } }` |
  | Bot → Service | `profile:get` | `{ requestId }`: get your own ID and name at any time; returns `profile { requestId, profile: { userId, displayName, pictureId? } }` (the same as `auth:ready`; no LINE request; shares the 10-per-second-per-connection budget with `history:fetch`; returns `INVALID_REQUEST` when not signed in) |
@@ -172,10 +178,10 @@ index 6b97c31..220e9bf 100644
  
  ```js
 diff --git a/README.ja.md b/README.ja.md
-index a6e80b5..47d2c4f 100644
+index a6e80b5..30aefff 100644
 --- a/README.ja.md
 +++ b/README.ja.md
-@@ -26,7 +26,21 @@ flowchart LR
+@@ -26,7 +26,23 @@ flowchart LR
  
  バックエンドは既定で `127.0.0.1` のみにバインドします（`config.yaml` で変更できます。「設定」を参照）。既定のポートは `3789` です。バックエンドは `tsc` で `dist/` に、フロントエンドは Vite で `dist/web/` にビルドします。メッセージはメモリにのみ保存し（チャンネルごとに最大 500 件、同じ id は重複排除、編集は上書き）、データベースは使用しません。スタンプ、プロフィール画像、受信したメディアはバックエンドの LRU キャッシュ（既定 200MB）を経由し、同じポートの HTTP で配信します。
  
@@ -195,10 +201,12 @@ index a6e80b5..47d2c4f 100644
 +スタンプのメタデータと所有商品の ID 範囲は、パッケージごとの既存の出力上限 200 件に達すると残りの走査を停止します。ID の順序、重複項目、後続のパッケージは維持します。
 +
 +Web ページで履歴を開いた際の既読スナップショットは、単調時計による経過時間で 10 秒間共有し、システム時刻の補正には影響されません。その間もリアルタイムの既読位置を統合し、ログアウト後は旧アカウントのスナップショットを引き継ぎません。
++
++アップロードの一時保存は単調時計で 10 分間利用でき、システム時刻の補正で早期失効したり有効期間が延びたりしません。期限切れは追加・参照時に削除し、送信成功時に消費、ログアウト時に消去する既存の動作と容量制限を維持します。
  
  ## 動作要件
  
-@@ -164,18 +178,25 @@ HTTP：`GET /media/:mediaId`（スタンプ、スタンプパックのアイコ
+@@ -164,18 +180,25 @@ HTTP：`GET /media/:mediaId`（スタンプ、スタンプパックのアイコ
  | ボット → サービス | `history:fetch` | `{ requestId, chatId, limit?, before? }`：Web ページと同じページ取得ですが、既読 snapshot は含みません |
  | ボット → サービス | `scam:check` | `{ requestId, chatId, messageId }`：`api.chats` 内の**相手から届いた**、サービスが表示済み（リアルタイム受信または `history:fetch` で取得）のテキストメッセージを Jev で分析します。サーバーは自身のキャッシュのテキストを送ります。`jev.token` の設定が必要で（未設定時は `SCAM_CHECK_UNAVAILABLE`）、全ボット合計で毎分 10 回、1 回ごとに TypeSafe の料金がかかります。成功時は `scam:result { requestId, chatId, messageId, analysis: { probability, tactic? } }` |
  | ボット → サービス | `profile:get` | `{ requestId }`：自分の ID と名前をいつでも取得できます。`profile { requestId, profile: { userId, displayName, pictureId? } }` を返します（`auth:ready` と同じ内容。LINE には問い合わせず、`history:fetch` と接続ごとに毎秒 10 回の枠を共有。未ログイン時は `INVALID_REQUEST`） |
@@ -228,10 +236,10 @@ index a6e80b5..47d2c4f 100644
  
  ```js
 diff --git a/README.md b/README.md
-index 7704eb9..e9cff3b 100644
+index 7704eb9..5e3b4ba 100644
 --- a/README.md
 +++ b/README.md
-@@ -26,7 +26,21 @@ flowchart LR
+@@ -26,7 +26,23 @@ flowchart LR
  
  後端預設只綁定 `127.0.0.1`（可在 `config.yaml` 改，見〈設定〉），預設埠 `3789`。後端 `tsc` 建置至 `dist/`；前端 Vite 建置至 `dist/web/`。訊息只存記憶體（每頻道最多 500 則，同 id 去重，編輯覆寫），不使用資料庫；貼圖、大頭照與收到的媒體經後端以 LRU（預設 200MB）快取後由同埠 HTTP 提供。
  
@@ -251,10 +259,12 @@ index 7704eb9..e9cff3b 100644
 +貼圖 metadata 與商品 ID 區間收滿每包既有的 200 筆輸出後即停止掃描其餘項目；不改變 ID 順序、重複項目或後續貼圖包。
 +
 +網頁開啟歷史時的已讀快照維持十秒短期共用，以單調經過時間判斷，不受系統校時影響；期間仍合併即時已讀位置，登出後不沿用舊帳號快照。
++
++上傳暫存的十分鐘有效期以單調時間計算，避免校時造成提前失效或延長使用；到期項目仍在新增／讀取時清理，成功發送後移除、登出清空，既有容量限制不變。
  
  ## 環境需求
  
-@@ -164,18 +178,25 @@ HTTP：`GET /media/:mediaId`（貼圖、貼圖包圖示、大頭照與原圖、
+@@ -164,18 +180,25 @@ HTTP：`GET /media/:mediaId`（貼圖、貼圖包圖示、大頭照與原圖、
  | 機器人 → 服務 | `history:fetch` | `{ requestId, chatId, limit?, before? }`：與網頁相同的分頁，但不附已讀快照 |
  | 機器人 → 服務 | `scam:check` | `{ requestId, chatId, messageId }`：以 Jev 分析 `api.chats` 內**別人傳來**、服務已顯示（即時收到或 `history:fetch` 取得）的文字訊息；伺服器送自己快取的文字。需設定 `jev.token`（否則 `SCAM_CHECK_UNAVAILABLE`），所有機器人合計每分鐘 10 次，每次依 TypeSafe 計費。成功回 `scam:result { requestId, chatId, messageId, analysis: { probability, tactic? } }` |
  | 機器人 → 服務 | `profile:get` | `{ requestId }`：隨時取得自己的 ID 與名稱，回 `profile { requestId, profile: { userId, displayName, pictureId? } }`（同 `auth:ready`；不呼叫 LINE，與 `history:fetch` 共用每連線每秒 10 次；未登入回 `INVALID_REQUEST`） |
@@ -284,7 +294,7 @@ index 7704eb9..e9cff3b 100644
  
  ```js
 diff --git a/SECURITY.md b/SECURITY.md
-index c3e123e..c9858d8 100644
+index c3e123e..022f9a5 100644
 --- a/SECURITY.md
 +++ b/SECURITY.md
 @@ -118,6 +118,7 @@ approval, and a regression against any of them is treated as a vulnerability.
@@ -325,7 +335,7 @@ index c3e123e..c9858d8 100644
  | Decrypt or parse failures **fail closed**: a placeholder is shown; content is never guessed. | project rule |
  
  ### Input, limits and abuse resistance
-@@ -173,7 +180,9 @@ approval, and a regression against any of them is treated as a vulnerability.
+@@ -173,7 +180,10 @@ approval, and a regression against any of them is treated as a vulnerability.
  | Download size is capped (`limits.downloadMaxBytes`, default 50 MiB, at most 100 MiB) and the media cache is a bounded LRU. | `src/line/provider.ts`, `src/media/service.ts` |
  | Message media is served `private, no-store`; it must not linger in the browser cache. | `src/http/server.ts` |
  | A message its sender took back keeps only sender and time in the cache (history pages and list previews included); its media is dropped from the media cache, a download already in progress is handed only to requests already waiting and never cached, and it is no longer fetched from LINE. | `src/model/store.ts`, `src/ws/hub.ts`, `src/line/provider.ts`, `src/media/service.ts` |
@@ -333,6 +343,7 @@ index c3e123e..c9858d8 100644
 +| Avatar, sticker, sticker-package icon and LINE emoji fetches use fixed LINE CDN origins with a timeout and `redirect: "error"`; emoji ids must be a 24-hex product id and a short number before they reach a URL. Their existing 2 MiB limit is enforced while streaming: an oversized Content-Length cancels before reading, and actual decoded chunks are counted even when the length is missing or understated. An over-limit stream is cancelled rather than fully buffered. | `src/line/provider.ts`, `src/line/emoji.ts`, `src/media/service.ts` |
 +| Sticker-catalog metadata enforces its existing 1,000,000 decoded UTF-16 code-unit limit while streaming and cancels overflow before reading the remainder. This is not a byte cap: valid multi-byte UTF-8, split characters, BOM handling and end-of-stream decoding are preserved. Oversized or invalid metadata retains the owned-product ID-range fallback. | `src/line/provider.ts` |
 +| CDN responses rejected by status or sticker Content-Type cancel their unused bodies instead of leaving them active until timeout or collection. Cancellation failures must not replace existing missing-media or error results, or prevent image and metadata fallbacks. | `src/line/provider.ts` |
++| Pending upload ids are usable for ten minutes of monotonic elapsed time, not wall-clock time. Expired items are pruned on insertion or lookup; successful sends consume them and logout clears them. Existing count and byte limits remain unchanged. | `src/media/service.ts`, `src/ws/hub.ts` |
  | Messages are never written to disk. At most 500 are kept per channel in memory, de-duplicated by message id. | `src/model/store.ts` |
  
  ### PWA
@@ -785,6 +796,28 @@ index 9bdb650..ae6e657 100644
    }
    if (stickerIds.length === 0) return undefined;
    const titles = asRecord(info.title);
+diff --git a/src/media/service.ts b/src/media/service.ts
+index a33b88a..c65a235 100644
+--- a/src/media/service.ts
++++ b/src/media/service.ts
+@@ -105,7 +105,7 @@ export class MediaService {
+   }
+ 
+   /** Holds an uploaded image or video until the browser references it from `message:send`. */
+-  putUpload(media: MediaBytes, now = Date.now()): string {
++  putUpload(media: MediaBytes, now = performance.now()): string {
+     this.pruneUploads(now);
+     // Make room for one more: oldest first (Map iterates in insertion order). Videos are held whole,
+     // so the count alone would not bound memory.
+@@ -121,7 +121,7 @@ export class MediaService {
+     return id;
+   }
+ 
+-  getUpload(id: string, now = Date.now()): MediaBytes | undefined {
++  getUpload(id: string, now = performance.now()): MediaBytes | undefined {
+     this.pruneUploads(now);
+     return this.uploads.get(id)?.media;
+   }
 diff --git a/src/model/dto.ts b/src/model/dto.ts
 index 9307238..a67a356 100644
 --- a/src/model/dto.ts
@@ -1565,6 +1598,30 @@ index e3ebc41..ae4abbe 100644
 +      assert.deepEqual(rated, ["current-valid"]);
 +    });
 +  }
++});
+diff --git a/test/media.test.mjs b/test/media.test.mjs
+index 3137b0f..89d18f0 100644
+--- a/test/media.test.mjs
++++ b/test/media.test.mjs
+@@ -219,3 +219,19 @@ test("pending uploads are bounded by size as well as count, oldest dropped first
+   assert.ok(media.getUpload(second, 0));
+   assert.equal(media.getUpload(second, 11 * 60 * 1000), undefined, "and anything expires after ten minutes");
+ });
++
++test("pending uploads remain usable until their elapsed deadline despite wall-clock corrections", (t) => {
++  const clock = { elapsed: 0, wall: Date.now() };
++  t.mock.method(performance, "now", () => clock.elapsed);
++  t.mock.method(Date, "now", () => clock.wall);
++  const media = new MediaService(1024, {});
++  const image = png(16);
++  const id = media.putUpload(image);
++  clock.wall += 600_001;
++  assert.deepEqual(media.getUpload(id), image);
++  clock.wall -= 1_200_002;
++  clock.elapsed = 599_999;
++  assert.deepEqual(media.getUpload(id), image);
++  clock.elapsed = 600_000;
++  assert.equal(media.getUpload(id), undefined);
 +});
 diff --git a/test/provider.test.mjs b/test/provider.test.mjs
 index 3dae4b2..66e09c8 100644
