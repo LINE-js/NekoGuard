@@ -1,8 +1,8 @@
 diff --git a/AGENTS.md b/AGENTS.md
-index 59cf16e..8794096 100644
+index 59cf16e..62bd32b 100644
 --- a/AGENTS.md
 +++ b/AGENTS.md
-@@ -68,8 +68,13 @@ Gate 依 [PLAN.md](PLAN.md) 逐關驗收，不跳關；Gate 0 遠端需存在四
+@@ -68,8 +68,14 @@ Gate 依 [PLAN.md](PLAN.md) 逐關驗收，不跳關；Gate 0 遠端需存在四
  8. 對外一律 generic 錯誤；內部錯誤只入本地日誌。
  9. 依賴釘選版本；`npm audit` 無 high 以上（Gate 4 驗收）。
  10. 解密／解析失敗 **fail-closed**：顯示佔位，不降級猜測內容。
@@ -11,6 +11,7 @@ index 59cf16e..8794096 100644
  12. 詐騙機率分析（2026-10 小語裁示，`jev.token` 有值才啟用）：金鑰只用於送往 `https://api.typesafe.ai/v1/systemone` 的 Bearer 標頭（拒絕重新導向），不送網頁（網頁只收 `scam:state { enabled }`）、不入日誌與錯誤；`scam:check` 網頁每連線每分鐘 10 次；機器人（2026-10 裁示開放）只限 `api.chats` 內的訊息，所有機器人連線合計每分鐘 10 次，不收 `scam:state`；只送指定的那一則、伺服器已顯示、非本帳號、未收回、非系統訊息的**伺服器快取文字**，不採用用戶端傳來的文字，不送寄件者或聊天室；回應 fail-closed（無 0–1 機率即失敗），失敗對外只回 generic `SCAM_CHECK_FAILED`；結果只送給要求的連線，網頁標示為模型估計、僅供參考。
 +13. OpenChat 管理員查詢（`chat:admins:get`，只限機器人）：僅 `api.chats` 內已知 `square`，所有機器人合計每分鐘 10 次；`hello.capabilities` 宣告 `"chat:admins"`。adapter 以 `getSquareChatMembers` 走完所有 continuationToken，只取 `membershipState: JOINED`（2）的 `ADMIN`（1）／`CO_ADMIN`（2），以 `getSquareChat.squareChatMember.squareMemberMid` 確認自己的身分且須出現在完整名單中。不得使用發言者角色快取或回傳部分結果；缺漏、循環、1000 頁上限或上游失敗回 generic `CHAT_ADMINS_FAILED`；非社群回 `CHAT_ADMINS_UNSUPPORTED`。回應 `chat:admins { requestId, chatId, admins, ownMemberId }` 只給要求者，generation 阻止登出／換帳號舊結果。`scam:check` 未知自己社群身分時也須先取得成員資料，失敗不呼叫付費分析，排除手機與機器人自己的訊息。LINE 無跨頁原子 snapshot，文件須保留此限制與未實帳號驗證聲明。
 +14. 管理員標記：同一機器人連線最後發起且成功完成的 `chat:admins:get` 查證名單，可用 `message:send.mentions` 標記尚未發言者；僅限該聊天室。新查詢開始即撤銷舊名單及尚未完成的舊查詢授權資格，舊成功結果回 `CHAT_ADMINS_FAILED`，不得在新查詢等待中、成功或失敗後恢復授權。登出／換帳號清空全部授權。不得放行任意 ID、跨聊天室或其他連線的名單。網頁仍只允許已知發言者。
++15. WebSocket 操作與 HTTP 上傳的滑動窗口限流使用單調時鐘 `performance.now()`；不得以系統時間校正提早恢復配額或延長限制。既有配額、窗口長度及每連線／全域共用範圍不變。
 +
 +`scam:check` 的本地訊息資格檢查必須先於成員查詢，避免不存在或不可分析的訊息觸發 LINE 請求；未知自己身分的查詢完成後必須重讀並重新驗證訊息，不能分析等待前的舊快照。
 +同一登入工作階段、同一聊天室的並行分析僅共用尚未完成的自己身分查詢；完成／失敗回收，登出清空，舊查詢不能填入或刪除新工作階段的查詢狀態。不共用管理員授權或明確的 `chat:admins:get` 查詢，不自動重試，不合併付費分析或其限額。
@@ -18,10 +19,10 @@ index 59cf16e..8794096 100644
  內部日誌也不得包含憑證、token、QR URL、PIN 或 key material；不得直接 dump 套件錯誤物件、session 或登入 payload。圖片／貼圖／影片／語音位元組一律走 HTTP，WS 不傳位元組；收到的檔案只以 `file-<id>` 附件下載（`Content-Disposition: attachment`、`application/octet-stream`，不嗅探、不內嵌），規則同收到的媒體。訊息不落盤；每頻道最多 500 則，同 messageId 去重，編輯覆寫快取。LINE listen 失效採退避重啟；QR 失敗不自動循環，須由使用者動作重新產生。
  
 diff --git a/PLAN.md b/PLAN.md
-index 49acd5b..ab6dc68 100644
+index 49acd5b..6a67eae 100644
 --- a/PLAN.md
 +++ b/PLAN.md
-@@ -150,17 +150,25 @@
+@@ -150,17 +150,26 @@
  
  > v1.17（小語裁示：取得個人 ID，協定版本仍為 2）：新增 Client → Server `profile:get`（`{ requestId }`），網頁與機器人連線皆可用，回 `profile`（`{ requestId, profile }`，內容同 `auth:ready` 的 `profile`：`userId`、`displayName`、`pictureId?`），只送給要求的連線；只讀伺服器登入時取得的資料、不呼叫 LINE，未登入或缺 `requestId` 回 `INVALID_REQUEST`，與歷史共用每連線每秒 10 次的額度。機器人不受 `api.chats` 限制（不涉及任何聊天室）。網頁在左上角自己的名稱列右鍵（觸控長按）可顯示並複製自己的 ID。
  
@@ -31,6 +32,7 @@ index 49acd5b..ab6dc68 100644
 +> 並行分析僅在同一登入工作階段、同一聊天室共用進行中的自己身分解析；完成／失敗釋放、登出清空並丟棄舊結果，不自動重試。每則分析仍分別計費與限流，不授予標記權；明確 `chat:admins:get` 不共用此查詢，維持每次重新查證。
 +> 即時事件編碼：僅對 `api.chats` 內的新訊息、編輯與收回，跨網頁／機器人共用一次 JSON 編碼並直接遍歷兩組連線；範圍外仍只送網頁，不改變資料可見性、事件內容或背壓限制。回應與廣播均先排除已關閉或超過背壓上限的連線，沒有可傳送接收端便不編碼；超限連線仍立即終止。
 +> 清單快照：每次聊天室清單廣播只建立一份排序快照，網頁使用完整名單，機器人另依 `api.chats` 篩選；連線初始化仍從當下快取產生名單，不保留跨刷新快照。
++> 限流時鐘：WebSocket 操作與 HTTP 上傳的滑動窗口均使用單調經過時間；系統校時不能提早恢復配額或延長限制，既有額度、窗口長度與共用範圍不變。
 +
  ### Server → Client
  
@@ -48,7 +50,7 @@ index 49acd5b..ab6dc68 100644
  | `channels` | `{ channels: Channel[] }`（snapshot，連線即送、變動重送） |
  | `messages` | `{ chatId, messages: Message[] }`（連線時快照，每個聊天室一個影格；舊訊息，不計未讀） |
  | `message` | `{ message: Message }`（即時新訊息） |
-@@ -190,6 +198,7 @@
+@@ -190,6 +199,7 @@
  | `message:react` | `{ requestId, chatId, messageId, reaction: "NICE"｜"LOVE"｜"FUN"｜"AMAZING"｜"SAD"｜"OMG"｜null }`（僅網頁，與 `message:send` 共用頻率上限） |
  | `scam:check` | `{ requestId, chatId, messageId }`（網頁每連線每分鐘 10 次；機器人限 `api.chats`、所有機器人合計每分鐘 10 次；只接受別人傳來、已顯示、未收回的文字訊息） |
  | `profile:get` | `{ requestId }`（自己的 `profile`；網頁與機器人皆可，不呼叫 LINE） |
@@ -56,7 +58,7 @@ index 49acd5b..ab6dc68 100644
  | `channels:refresh` | `{}` |
  | `api:token:create` / `api:token:revoke` | `{}`（產生或撤銷機器人 Token，並中斷所有機器人連線） |
  | `ping` | `{}` |
-@@ -197,7 +206,7 @@
+@@ -197,7 +207,7 @@
  ### 機器人 API（`/api/ws`）
  - 升級條件：`api.enabled`、**無 `Origin`**、`Authorization: Bearer linejs_…` 符合目前 Token；否則 403（同時超過 4 個連線回 429）。`Host` 不限制（同網頁）。
  - 連線時收到 `hello`、`auth:state`、`status`、`auth:ready`、僅含 `api.chats` 的 `channels`；之後只有這些聊天室的 `message`／`message:edit`。不重播、不給 `read`／`update:available`／`api:state`。
@@ -66,7 +68,7 @@ index 49acd5b..ab6dc68 100644
  
  ### HTTP
 diff --git a/README.en.md b/README.en.md
-index 6b97c31..0d14b2c 100644
+index 6b97c31..4faac6d 100644
 --- a/README.en.md
 +++ b/README.en.md
 @@ -164,18 +164,25 @@ Lets your own programs (bots) send and receive messages. **Disabled by default**
@@ -86,7 +88,8 @@ index 6b97c31..0d14b2c 100644
  Everything else returns `UNKNOWN_TYPE`: no login/logout, `chat:read` (sending read receipts), `message:unsend` (taking back), `message:react` (reactions), `channels:refresh`, sticker lists, or Token management. **Old messages are not replayed** (bots start from “now” and do not respond to history again; use `history:fetch` for history). No `read`, `update:available`, `api:state`, or `scam:state` is provided. Image/video and other media bytes are also inaccessible (bots see only the message's `contentType`).
  
  **Rate limits and risks**
- - Each connection is limited by `limits.sendsPerSecond` (≤5), and all bots together may not exceed `api.sendsPerMinute`; exceeding either returns `RATE_LIMITED`.
+-- Each connection is limited by `limits.sendsPerSecond` (≤5), and all bots together may not exceed `api.sendsPerMinute`; exceeding either returns `RATE_LIMITED`.
++- Each connection is limited by `limits.sendsPerSecond` (≤5), and all bots together may not exceed `api.sendsPerMinute`; exceeding either returns `RATE_LIMITED`. Rate-limit windows use monotonic elapsed time, so wall-clock corrections cannot replenish quotas early or prolong exhaustion.
  - `scam:check` has its own limit of 10 per minute across all bots (separate from the web pages' budget); exceeding it returns `RATE_LIMITED`.
 +- `chat:admins:get` is limited to 10 per minute across all bots (`RATE_LIMITED`); support is advertised in `hello.capabilities` as `"chat:admins"`. Non-OpenChat returns `CHAT_ADMINS_UNSUPPORTED`; missing metadata, repeated pagination tokens, more than 1000 pages or LINE failure returns generic `CHAT_ADMINS_FAILED`, never a partial list. Logout/account changes discard stale results. LINE offers no atomic cross-page snapshot, so membership changes during a scan can race; real LINE account behavior has not been exercised.
 +- `scam:check` first rejects missing, non-text, unsent, undecryptable, system and known own messages from the local cache, without querying LINE membership for them. For other OpenChat messages, it resolves complete membership if own identity is unknown; failure never calls paid analysis. After waiting, it rereads and validates the current message, still rejecting own phone and bot messages. Actual mentions still use `message:send.mentions` (up to 20, UTF-16 offsets) and `replyTo`.
@@ -98,7 +101,7 @@ index 6b97c31..0d14b2c 100644
  
  ```js
 diff --git a/README.ja.md b/README.ja.md
-index a6e80b5..27a1558 100644
+index a6e80b5..d004422 100644
 --- a/README.ja.md
 +++ b/README.ja.md
 @@ -164,18 +164,25 @@ HTTP：`GET /media/:mediaId`（スタンプ、スタンプパックのアイコ
@@ -118,7 +121,8 @@ index a6e80b5..27a1558 100644
  それ以外はすべて `UNKNOWN_TYPE` を返します。ログイン／ログアウト、`chat:read`（既読通知）、`message:unsend`（送信取消）、`message:react`（リアクション）、`channels:refresh`、スタンプ一覧、Token 管理は利用できません。**過去のメッセージは再送しません**（ボットは「今」から開始し、履歴に重複して応答しません。履歴は `history:fetch` を使ってください）。`read`、`update:available`、`api:state`、`scam:state` は送信しません。画像／動画などのメディアのバイト列も取得できません（ボットにはメッセージの `contentType` のみ見えます）。
  
  **頻度とリスク**
- - 各接続は `limits.sendsPerSecond`（≤5）の制限を受け、全ボット合計で毎分 `api.sendsPerMinute` を超えてはいけません。超過すると `RATE_LIMITED` を返します。
+-- 各接続は `limits.sendsPerSecond`（≤5）の制限を受け、全ボット合計で毎分 `api.sendsPerMinute` を超えてはいけません。超過すると `RATE_LIMITED` を返します。
++- 各接続は `limits.sendsPerSecond`（≤5）の制限を受け、全ボット合計で毎分 `api.sendsPerMinute` を超えてはいけません。超過すると `RATE_LIMITED` を返します。時間窓は単調増加時計で測定し、システム時刻の補正で枠が早期回復したり、制限時間が延長されたりしません。
  - `scam:check` には別途、全ボット合計で毎分 10 回の上限があります（Web ページの枠とは別）。超過すると `RATE_LIMITED` を返します。
 +- `chat:admins:get` は全ボット合計で毎分 10 回（超過は `RATE_LIMITED`）。対応時は `hello.capabilities` に `"chat:admins"` を含みます。OpenChat 以外は `CHAT_ADMINS_UNSUPPORTED`。メタデータ不足、ページトークンの循環、1000 ページ超過、LINE の失敗は汎用の `CHAT_ADMINS_FAILED` とし、不完全な一覧は返しません。ログアウトやアカウント変更で古い結果を破棄します。LINE にページ間の原子的 snapshot はなく、走査中のメンバー変更は競合し得ます。実際の LINE アカウントでは未検証です。
 +- `scam:check` はまずローカルキャッシュで、存在しない・非テキスト・送信取消済み・復号失敗・システム・既知の自分のメッセージを拒否し、それらのために LINE のメンバー情報を取得しません。それ以外の OpenChat メッセージで自分の ID が不明なら完全なメンバー情報を取得し、失敗時は有料分析を呼びません。待機後は最新のメッセージを読み直して検証し、スマートフォンやボット自身のメッセージも引き続き拒否します。実際のメンションは `message:send.mentions`（最大 20 人、UTF-16 位置）と `replyTo` を使います。
@@ -130,7 +134,7 @@ index a6e80b5..27a1558 100644
  
  ```js
 diff --git a/README.md b/README.md
-index 7704eb9..df77fbc 100644
+index 7704eb9..8b169c3 100644
 --- a/README.md
 +++ b/README.md
 @@ -164,18 +164,25 @@ HTTP：`GET /media/:mediaId`（貼圖、貼圖包圖示、大頭照與原圖、
@@ -150,7 +154,8 @@ index 7704eb9..df77fbc 100644
  其餘一律回 `UNKNOWN_TYPE`：沒有登入／登出、`chat:read`（已讀回報）、`message:unsend`（收回）、`message:react`（回應）、`channels:refresh`、貼圖清單、Token 管理。**不重播舊訊息**（機器人從「現在」開始，不會重複回應歷史；要歷史請用 `history:fetch`）；不給 `read`、`update:available`、`api:state`、`scam:state`；圖片／影片等媒體位元組也無法取得（機器人只看到訊息的 `contentType`）。
  
  **頻率與風險**
- - 每個連線受 `limits.sendsPerSecond`（≤5）限制，且所有機器人合計每分鐘不超過 `api.sendsPerMinute`；超過回 `RATE_LIMITED`。
+-- 每個連線受 `limits.sendsPerSecond`（≤5）限制，且所有機器人合計每分鐘不超過 `api.sendsPerMinute`；超過回 `RATE_LIMITED`。
++- 每個連線受 `limits.sendsPerSecond`（≤5）限制，且所有機器人合計每分鐘不超過 `api.sendsPerMinute`；超過回 `RATE_LIMITED`。限流窗口以單調時鐘計算，不因系統校時提早恢復配額或延長限流時間。
  - `scam:check` 另有所有機器人合計每分鐘 10 次的上限（與網頁的額度分開），超過回 `RATE_LIMITED`。
 +- `chat:admins:get` 所有機器人合計每分鐘 10 次，超過回 `RATE_LIMITED`；`hello.capabilities` 含 `"chat:admins"` 才支援。非 OpenChat 回 `CHAT_ADMINS_UNSUPPORTED`；資料缺漏、分頁循環、超過 1000 頁或 LINE 失敗回 generic `CHAT_ADMINS_FAILED`，不回不完整名單。登出／換帳號會丟棄舊查詢結果。LINE 不提供跨頁原子快照，掃描期間的成員異動仍可能競態；未對真實 LINE 帳號實測。
 +- `scam:check` 先以本地快取拒絕不存在、非文字、已收回、解密失敗、系統及已知本帳號訊息，不為這些要求查詢 LINE 成員。其餘 OpenChat 訊息若尚無自己的成員身分，先取得完整成員資料，失敗不呼叫付費分析；等待後重新讀取並檢查目前訊息，自己的手機與機器人訊息仍一律拒絕。發送真正標記仍使用 `message:send.mentions`（最多 20 個、UTF-16 位置）與 `replyTo`。
@@ -162,10 +167,18 @@ index 7704eb9..df77fbc 100644
  
  ```js
 diff --git a/SECURITY.md b/SECURITY.md
-index c3e123e..a9c06b2 100644
+index c3e123e..fedf47f 100644
 --- a/SECURITY.md
 +++ b/SECURITY.md
-@@ -127,8 +127,10 @@ approval, and a regression against any of them is treated as a vulnerability.
+@@ -118,6 +118,7 @@ approval, and a regression against any of them is treated as a vulnerability.
+ | `POST /media/upload` additionally requires same-origin `Origin` and the cookie, so another website cannot queue media for sending. | `src/http/server.ts` |
+ | A strict CSP (`default-src 'none'`, `script-src 'self'`, `frame-ancestors 'none'`, no inline script) and `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store` are sent on every response. The one exception is the public build output under `/assets/` (content-hashed file names, no account data), which is `public, max-age=31536000, immutable`. | `src/http/server.ts` |
+ | There is no HTTP login endpoint. Login runs only over the WebSocket. The CLI (`npm run cli`) is a client of that same WebSocket; it never reads or writes `session.json` itself. | `src/ws/hub.ts`, `src/cli.ts` |
++| Sliding-window quotas for WebSocket actions and HTTP uploads use monotonic elapsed time. Wall-clock corrections cannot replenish a budget early or prolong exhaustion; configured limits, window lengths and sharing scopes remain unchanged. | `src/limit.ts` |
+ 
+ ### Bot API (`/api/ws`, off by default)
+ 
+@@ -127,8 +128,10 @@ approval, and a regression against any of them is treated as a vulnerability.
  | An upgrade needs **no `Origin` header** (every browser WebSocket sends one, so no web page can use this endpoint even if the token leaks into it) and `Authorization: Bearer <token>`; the `Host` header is not checked. Failures all look the same (403); more than 4 concurrent bots get 429. | `src/http/server.ts` (`authorizeApiUpgrade`), `src/ws/hub.ts` |
  | The token is 256 bits of randomness with a `linejs_` prefix. Only its SHA-256 is stored (`api-token.json`, mode `0600`, git-ignored, written via temporary file and rename); it is compared in constant time and shown **once**, only to the connection that asked for it. It is never logged or broadcast. | `src/http/apiToken.ts`, `src/ws/hub.ts`, `src/cli.ts` |
  | Regenerating or revoking the token closes every bot connection immediately. Only ordinary `/ws` connections (the web page, or the local CLI, which obtains the page cookie the same way) can create or revoke it; a bot cannot. | `src/ws/hub.ts` |
@@ -177,7 +190,7 @@ index c3e123e..a9c06b2 100644
  
  ### Scam check (TypeSafe Jev, off by default)
  
-@@ -138,6 +140,8 @@ approval, and a regression against any of them is treated as a vulnerability.
+@@ -138,6 +141,8 @@ approval, and a regression against any of them is treated as a vulnerability.
  | The token is used only as the `Authorization: Bearer` header to `https://api.typesafe.ai/v1/systemone`, with redirects refused. It is never sent to the page (pages only learn `scam:state { enabled }`), logged, or included in errors; a failed call logs only `SCAM_CHECK_FAILED` with the HTTP status. | `src/jev/client.ts`, `src/ws/hub.ts` |
  | Only an explicit request sends anything: from a page, `scam:check` is limited to 10 per minute per connection; from a bot, it is limited to the chats in `api.chats` and to 10 per minute across all bot connections together. The server sends **its own cached text** of a message it has shown, from someone other than this account, that was not taken back, decrypted and not a system message; text supplied by the client is ignored, so the endpoint cannot be used to send arbitrary text out. Nothing else (sender, chat, other messages) is sent. | `src/ws/hub.ts`, `src/ws/requests.ts` |
  | The answer is parsed fail-closed: without a probability between 0 and 1 there is no result, and an unknown scam kind is dropped. The result goes only to the connection that asked. | `src/jev/client.ts`, `src/ws/hub.ts` |
@@ -186,6 +199,24 @@ index c3e123e..a9c06b2 100644
  
  ### Secrets and credentials
  
+diff --git a/src/limit.ts b/src/limit.ts
+index c7143f7..59cd0c4 100644
+--- a/src/limit.ts
++++ b/src/limit.ts
+@@ -1,11 +1,11 @@
+-/** At most `max` events in any trailing `windowMs`. */
++/** At most `max` events in any trailing `windowMs`, unaffected by wall-clock corrections. */
+ export class SlidingWindowLimiter {
+   private events: number[] = [];
+ 
+   constructor(private readonly max: number, private readonly windowMs: number) {}
+ 
+   /** Records the event and returns true when it is within budget; refused events are not recorded. */
+-  allow(now = Date.now()): boolean {
++  allow(now = performance.now()): boolean {
+     while (this.events.length > 0 && now - this.events[0]! >= this.windowMs) this.events.shift();
+     if (this.events.length >= this.max) return false;
+     this.events.push(now);
 diff --git a/src/line/provider.ts b/src/line/provider.ts
 index 58f8902..b5a944b 100644
 --- a/src/line/provider.ts
@@ -610,7 +641,7 @@ index 31fd7a2..9518ee1 100644
    const base = header(frame);
    if (!base) return { ok: false, ...(requestIdOf(frame) ? { requestId: requestIdOf(frame)! } : {}) };
 diff --git a/test/hub.test.mjs b/test/hub.test.mjs
-index e3ebc41..ee864ae 100644
+index e3ebc41..15e88f1 100644
 --- a/test/hub.test.mjs
 +++ b/test/hub.test.mjs
 @@ -5,6 +5,7 @@ import { createServer } from "node:net";
@@ -621,7 +652,7 @@ index e3ebc41..ee864ae 100644
  import { createWebServer } from "../dist/http/server.js";
  import { createHub } from "../dist/ws/hub.js";
  import { ApiTokenStore } from "../dist/http/apiToken.js";
-@@ -1571,3 +1572,364 @@ test("a connection that stops answering pings is closed by the next heartbeat; o
+@@ -1571,3 +1572,376 @@ test("a connection that stops answering pings is closed by the next heartbeat; o
    assert.equal(healthy.socket.readyState, WebSocket.OPEN);
    assert.equal(pings, 2);
  });
@@ -679,16 +710,28 @@ index e3ebc41..ee864ae 100644
 +  assert.equal(analyses, 0);
 +});
 +
-+test("all bot connections share the admin discovery rate budget", async (t) => {
++test("all bot connections share the admin discovery budget across wall-clock changes", async (t) => {
++  const clock = { elapsed: 0, wall: Date.now() };
++  t.mock.method(performance, "now", () => clock.elapsed);
++  t.mock.method(Date, "now", () => clock.wall);
 +  const env = await adminEnv(t);
 +  const bots = [await env.open(), await env.open()];
 +  for (let n = 0; n < 11; n += 1) {
++    if (n === 10) clock.wall += 60_000;
 +    const bot = bots[n % 2];
 +    bot.socket.send(JSON.stringify({ type: "chat:admins:get", requestId: `a${n}`, chatId: ADMIN_CHAT }));
 +    const response = await bot.until((f) => f.requestId === `a${n}`);
 +    assert.equal(n < 10 ? response.type : response.code, n < 10 ? "chat:admins" : "RATE_LIMITED");
 +  }
 +  assert.equal(env.provider.calls.length, 10);
++  clock.wall -= 120_000;
++  clock.elapsed += 59_999;
++  bots[0].socket.send(JSON.stringify({ type: "chat:admins:get", requestId: "before-expiry", chatId: ADMIN_CHAT }));
++  assert.equal((await bots[0].until((f) => f.requestId === "before-expiry")).code, "RATE_LIMITED");
++  clock.elapsed += 1;
++  bots[1].socket.send(JSON.stringify({ type: "chat:admins:get", requestId: "at-expiry", chatId: ADMIN_CHAT }));
++  assert.equal((await bots[1].until((f) => f.requestId === "at-expiry")).type, "chat:admins");
++  assert.equal(env.provider.calls.length, 11);
 +});
 +
 +test("admin discovery fails generically and discards both successful and failed results across logout and relogin", async (t) => {
