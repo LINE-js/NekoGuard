@@ -1,5 +1,5 @@
 diff --git a/AGENTS.md b/AGENTS.md
-index 59cf16e..5ff5448 100644
+index 59cf16e..5fd35c5 100644
 --- a/AGENTS.md
 +++ b/AGENTS.md
 @@ -62,14 +62,21 @@ Gate 依 [PLAN.md](PLAN.md) 逐關驗收，不跳關；Gate 0 遠端需存在四
@@ -20,7 +20,7 @@ index 59cf16e..5ff5448 100644
 +13. OpenChat 管理員查詢（`chat:admins:get`，只限機器人）：僅 `api.chats` 內已知 `square`，所有機器人合計每分鐘 10 次；`hello.capabilities` 宣告 `"chat:admins"`。adapter 以 `getSquareChatMembers` 走完所有 continuationToken，只取 `membershipState: JOINED`（2）的 `ADMIN`（1）／`CO_ADMIN`（2），以 `getSquareChat.squareChatMember.squareMemberMid` 確認自己的身分且須出現在完整名單中。不得使用發言者角色快取或回傳部分結果；缺漏、循環、1000 頁上限或上游失敗回 generic `CHAT_ADMINS_FAILED`；非社群回 `CHAT_ADMINS_UNSUPPORTED`。回應 `chat:admins { requestId, chatId, admins, ownMemberId }` 只給要求者，generation 阻止登出／換帳號舊結果。`scam:check` 未知自己社群身分時也須先取得成員資料，失敗不呼叫付費分析，排除手機與機器人自己的訊息。LINE 無跨頁原子 snapshot，文件須保留此限制與未實帳號驗證聲明。
 +14. 管理員標記：同一機器人連線最後發起且成功完成的 `chat:admins:get` 查證名單，可用 `message:send.mentions` 標記尚未發言者；僅限該聊天室。新查詢開始即撤銷舊名單及尚未完成的舊查詢授權資格，舊成功結果回 `CHAT_ADMINS_FAILED`，不得在新查詢等待中、成功或失敗後恢復授權。登出／換帳號清空全部授權。不得放行任意 ID、跨聊天室或其他連線的名單。網頁仍只允許已知發言者。
 +15. WebSocket 操作與 HTTP 上傳的滑動窗口限流使用單調時鐘 `performance.now()`；不得以系統時間校正提早恢復配額或延長限制。既有配額、窗口長度及每連線／全域共用範圍不變。
-+16. 成員顯示資料查詢、失敗退避與訊息傳遞佇列屬於當前登入工作階段。登出作廢舊佇列，舊查詢不得啟動後續批次或寫入新帳號的重試狀態，新帳號訊息不得等待舊查詢。已送出的外部要求可能仍會完成，但結果不得跨帳號生效。既有五分鐘失敗退避使用單調時間，校時不得提前解除或延長等待；只在後續有需求時重試。同一 OpenChat 成員共用尚未完成的顯示資料查詢，後續批次略過等待期間已取得的資料；各呼叫仍最多等候五秒。完成／失敗回收共用關聯，登出清空，舊結果不得移除新登入的查詢，不影響管理員授權查證。
++16. 成員顯示資料查詢、失敗退避與訊息傳遞佇列屬於當前登入工作階段。登出作廢舊佇列，舊查詢不得啟動後續批次或寫入新帳號的重試狀態，新帳號訊息不得等待舊查詢。已送出的外部要求可能仍會完成，但結果不得跨帳號生效。既有五分鐘失敗退避使用單調時間，校時不得提前解除或延長等待；只在後續有需求時重試。同一 OpenChat 成員及 talk 聯絡人批次中重疊的 ID 共用尚未完成的顯示資料查詢；talk 只傳送新 ID，保留每批百人上限，OpenChat 後續批次略過等待期間已取得的資料。各呼叫仍最多等候五秒。完成／失敗回收共用關聯，登出清空，舊結果不得移除新登入的查詢，不影響管理員授權查證。
 +
 +`scam:check` 的本地訊息資格檢查必須先於成員查詢，避免不存在或不可分析的訊息觸發 LINE 請求；未知自己身分的查詢完成後必須重讀並重新驗證訊息，不能分析等待前的舊快照。
 +同一登入工作階段、同一聊天室的並行分析僅共用尚未完成的自己身分查詢；完成／失敗回收，登出清空，舊查詢不能填入或刪除新工作階段的查詢狀態。不共用管理員授權或明確的 `chat:admins:get` 查詢，不自動重試，不合併付費分析或其限額。
@@ -37,10 +37,10 @@ index 59cf16e..5ff5448 100644
  
  LINE operation 與連線注意事項：linejs 未記載多數 operation 的參數排列，`SEND_CHAT_CHECKED`（手機已讀）只取 `param1` 且須為伺服器已知聊天室；群組／個人資料／聊天室成員變動不解析參數，只觸發節流的頻道清單重新整理（3 秒合併、最多每 30 秒一次），不得改成依參數猜測內容。頻道清單的最後一則訊息（`Channel.lastMessage`）是預覽，不登記媒體來源，不能藉此下載。WS 心跳：伺服器以協定層 Ping 每 30 秒檢查、兩輪無回應即關閉；網頁 `ping` 需 10 秒內收到 `pong`，回到前景立即探測。斷線記錄（網頁主控台、服務日誌 `WS_CLOSED`）只可含時間、close code、截短的 reason 與前後景狀態，不得含標頭、cookie 或 Token。
 diff --git a/PLAN.md b/PLAN.md
-index 49acd5b..32e5ae4 100644
+index 49acd5b..8c1caa1 100644
 --- a/PLAN.md
 +++ b/PLAN.md
-@@ -144,23 +144,68 @@
+@@ -144,23 +144,70 @@
  
  > 實作補完（協定版本仍為 2）：登出／換帳號以 session generation 作廢歷史、發送、回應、收回、已讀與頻道查詢的舊結果；歷史重新載入也同步清除已取消的回應。OpenChat 歷史採同聊天室 single-flight、時間＋訊息 id 錨點，快取最多 5 個聊天室各 5000 則、10 分鐘，合併即時訊息與狀態，過期時重新取得回應，僅已提供頁面的訊息授權媒體。網頁搜尋維持即時更新並跨聊天室依時間排序；初次歷史失敗可重試，回應更新不重建媒體 DOM，登出清除搜尋、私人畫面與通知。隔離測試與無頭靜音瀏覽器已驗證；尚未對本次變動重新進行真實 LINE Gate 驗收。
  
@@ -80,6 +80,8 @@ index 49acd5b..32e5ae4 100644
 +
 +> OpenChat 成員查詢共用：同一登入內跨聊天室共用同一成員的未完成查詢，後續批次略過等待期間已取得的資料；完成／失敗回收，登出清空，舊結果不能刪除新登入的查詢。每次解析的五筆並行上限、各呼叫五秒等候與五分鐘失敗退避不變。實際 Provider＋WebSocket 驗證即時訊息與歷史內容一致、不同成員不互相阻塞及失敗後重試；回歸測試涵蓋逾時後遲到資料及登入隔離。288 項測試通過，未連接真實 LINE。
 +
++> talk 聯絡人批次共用：重疊 ID 等待既有查詢，只有新 ID 送入原有百人批次；每個呼叫維持獨立五秒等候，完成／失敗回收，舊登入結果不能刪除新登入的查詢。實際 Provider＋WebSocket 處理重疊的兩份百人歷史及即時訊息，完整回覆 hash 保持一致，所需成員已就緒的即時訊息不再等待其他批次。回歸測試涵蓋偏好名稱、個別期限、失敗退避重試與登入隔離。294 項測試通過，未連接真實 LINE。
++
  > v1.15（小語裁示：JEV 詐騙分析，協定版本仍為 2）：`config.yaml` 新增選用區段 `jev`（`token`：TypeSafe API 金鑰，有值才啟用；`model`：預設 `jev-1.13.0`）。新增 Server → Client `scam:state`（`{ enabled }`，連線即送、只給網頁，不含金鑰）與 `scam:result`（`{ requestId, chatId, messageId, analysis: { probability, tactic?: { kind, confidence } } }`，只送給要求的連線），Client → Server `scam:check`（`{ requestId, chatId, messageId }`，僅網頁、每連線每分鐘 10 次）。伺服器只接受已顯示、非本帳號、未收回、已解密、非系統訊息的文字訊息，以自己快取的文字經 `src/jev/` 呼叫 `POST https://api.typesafe.ai/v1/systemone`（Noul 題問是否為詐騙、Choice 題問最接近的手法；題目用英文，因官方說明英文準確度最佳），回應 fail-closed；未設定金鑰回 `SCAM_CHECK_UNAVAILABLE`，失敗回 `SCAM_CHECK_FAILED`。網頁對別人的文字訊息右鍵出現「詐騙機率分析」，以官方範例門檻分級（> 0.8 高度疑似、≤ 0.2 不太像、其間無法確定）並註明為模型估計、文字已送至 TypeSafe。尚未以有效金鑰實測真實分析結果。
  
  > v1.16（小語裁示：JEV 開放給機器人 API，協定版本仍為 2；MCP 入口裁示不做）：機器人連線新增 `scam:check`（`{ requestId, chatId, messageId }`），規則同網頁——只接受伺服器已顯示、非本帳號、未收回、已解密、非系統訊息的文字訊息，送伺服器快取的文字——另限 `api.chats` 內的聊天室（其餘 `UNKNOWN_CHAT`），所有機器人連線合計每分鐘 10 次（與網頁各連線的額度分開）；成功回 `scam:result`，未設定金鑰回 `SCAM_CHECK_UNAVAILABLE`。機器人不收 `scam:state`。不接受機器人傳任意文字。
@@ -110,7 +112,7 @@ index 49acd5b..32e5ae4 100644
  | `channels` | `{ channels: Channel[] }`（snapshot，連線即送、變動重送） |
  | `messages` | `{ chatId, messages: Message[] }`（連線時快照，每個聊天室一個影格；舊訊息，不計未讀） |
  | `message` | `{ message: Message }`（即時新訊息） |
-@@ -190,6 +235,7 @@
+@@ -190,6 +237,7 @@
  | `message:react` | `{ requestId, chatId, messageId, reaction: "NICE"｜"LOVE"｜"FUN"｜"AMAZING"｜"SAD"｜"OMG"｜null }`（僅網頁，與 `message:send` 共用頻率上限） |
  | `scam:check` | `{ requestId, chatId, messageId }`（網頁每連線每分鐘 10 次；機器人限 `api.chats`、所有機器人合計每分鐘 10 次；只接受別人傳來、已顯示、未收回的文字訊息） |
  | `profile:get` | `{ requestId }`（自己的 `profile`；網頁與機器人皆可，不呼叫 LINE） |
@@ -118,7 +120,7 @@ index 49acd5b..32e5ae4 100644
  | `channels:refresh` | `{}` |
  | `api:token:create` / `api:token:revoke` | `{}`（產生或撤銷機器人 Token，並中斷所有機器人連線） |
  | `ping` | `{}` |
-@@ -197,7 +243,7 @@
+@@ -197,7 +245,7 @@
  ### 機器人 API（`/api/ws`）
  - 升級條件：`api.enabled`、**無 `Origin`**、`Authorization: Bearer linejs_…` 符合目前 Token；否則 403（同時超過 4 個連線回 429）。`Host` 不限制（同網頁）。
  - 連線時收到 `hello`、`auth:state`、`status`、`auth:ready`、僅含 `api.chats` 的 `channels`；之後只有這些聊天室的 `message`／`message:edit`。不重播、不給 `read`／`update:available`／`api:state`。
@@ -128,7 +130,7 @@ index 49acd5b..32e5ae4 100644
  
  ### HTTP
 diff --git a/README.en.md b/README.en.md
-index 6b97c31..bf05e63 100644
+index 6b97c31..5dd8276 100644
 --- a/README.en.md
 +++ b/README.en.md
 @@ -26,7 +26,25 @@ flowchart LR
@@ -154,7 +156,7 @@ index 6b97c31..bf05e63 100644
 +
 +Pending uploads remain usable for ten minutes of monotonic elapsed time, unaffected by wall-clock corrections. Expired items are still pruned on insertion or lookup, successful sends consume them, logout clears them, and existing capacity limits are unchanged.
 +
-+Member-name lookup stops scanning candidates once it selects the existing limit of 100 eligible members in input order, avoiding full-list intermediate arrays. Deduplication, cached-member skipping, failure cooldowns and lookup concurrency limits are unchanged. Chats in the same login session share pending lookups for the same OpenChat member, and later batches skip profiles resolved while waiting. Each caller still waits at most five seconds. Completion or failure releases the shared entry; logout clears it and stale results cannot remove a new session's lookup. Administrator authorization checks are not shared through this cache.
++Member-name lookup stops scanning candidates once it selects the existing limit of 100 eligible members in input order, avoiding full-list intermediate arrays. Deduplication, cached-member skipping, failure cooldowns and lookup concurrency limits are unchanged. Chats in the same login session share pending lookups for the same OpenChat member. Talk contact batches also omit IDs already in flight and wait for their existing batches, keeping the 100-contact batch limit. Later OpenChat batches skip profiles resolved while waiting. Each caller still waits at most five seconds. Completion or failure releases the shared entry; logout clears it and stale results cannot remove a new session's lookup. Administrator authorization checks are not shared through this cache.
  
  ## Requirements
  
@@ -188,7 +190,7 @@ index 6b97c31..bf05e63 100644
  
  ```js
 diff --git a/README.ja.md b/README.ja.md
-index a6e80b5..bb8f7f7 100644
+index a6e80b5..acd541d 100644
 --- a/README.ja.md
 +++ b/README.ja.md
 @@ -26,7 +26,25 @@ flowchart LR
@@ -214,7 +216,7 @@ index a6e80b5..bb8f7f7 100644
 +
 +アップロードの一時保存は単調時計で 10 分間利用でき、システム時刻の補正で早期失効したり有効期間が延びたりしません。期限切れは追加・参照時に削除し、送信成功時に消費、ログアウト時に消去する既存の動作と容量制限を維持します。
 +
-+メンバー名の照会は、入力順に既存上限の 100 人を選んだ時点で候補の走査を止め、名簿全体の中間配列を作りません。重複除外、既知メンバーの除外、失敗後の待機時間と照会の並行数制限は維持します。同一ログインセッション内では、複数のチャットが同じ OpenChat メンバーへの処理中の照会を共有し、後続バッチでも待機中に取得済みとなった情報を除外します。各呼び出しの待機は従来どおり最大 5 秒です。完了・失敗時に共有を解除し、ログアウト時に消去します。古い結果は新セッションの照会を削除できず、管理者権限の検証にはこの共有を使用しません。
++メンバー名の照会は、入力順に既存上限の 100 人を選んだ時点で候補の走査を止め、名簿全体の中間配列を作りません。重複除外、既知メンバーの除外、失敗後の待機時間と照会の並行数制限は維持します。同一ログインセッション内では、複数のチャットが同じ OpenChat メンバーへの処理中の照会を共有します。通常トークの連絡先取得でも、取得中の ID は既存のバッチを待ち、新しい ID だけを従来どおり最大 100 人ずつ問い合わせます。OpenChat の後続バッチでは待機中に取得済みとなった情報を除外します。各呼び出しの待機は従来どおり最大 5 秒です。完了・失敗時に共有を解除し、ログアウト時に消去します。古い結果は新セッションの照会を削除できず、管理者権限の検証にはこの共有を使用しません。
  
  ## 動作要件
  
@@ -248,7 +250,7 @@ index a6e80b5..bb8f7f7 100644
  
  ```js
 diff --git a/README.md b/README.md
-index 7704eb9..064bf8e 100644
+index 7704eb9..00b62fb 100644
 --- a/README.md
 +++ b/README.md
 @@ -26,7 +26,25 @@ flowchart LR
@@ -274,7 +276,7 @@ index 7704eb9..064bf8e 100644
 +
 +上傳暫存的十分鐘有效期以單調時間計算，避免校時造成提前失效或延長使用；到期項目仍在新增／讀取時清理，成功發送後移除、登出清空，既有容量限制不變。
 +
-+成員名稱查詢依原順序選滿每次既有的 100 人上限後，立即停止候選掃描，避免先為整份名單建立多層中間陣列。去重、已知成員略過、失敗退避與查詢並行限制不變。同一登入工作階段跨聊天室共用同一 OpenChat 成員的未完成查詢，後續批次也略過等待期間已取得的資料；各呼叫仍最多等候五秒。完成／失敗回收共用關聯，登出清空，舊結果不得清除新登入的查詢；不影響管理員授權查證。
++成員名稱查詢依原順序選滿每次既有的 100 人上限後，立即停止候選掃描，避免先為整份名單建立多層中間陣列。去重、已知成員略過、失敗退避與查詢並行限制不變。同一登入工作階段跨聊天室共用同一 OpenChat 成員的未完成查詢；talk 聯絡人批次也只查詢尚未有請求處理的 ID，重疊部分等待原批次，保留每批百人上限。OpenChat 後續批次略過等待期間已取得的資料，各呼叫仍最多等候五秒。完成／失敗回收共用關聯，登出清空，舊結果不得清除新登入的查詢；不影響管理員授權查證。
  
  ## 環境需求
  
@@ -308,7 +310,7 @@ index 7704eb9..064bf8e 100644
  
  ```js
 diff --git a/SECURITY.md b/SECURITY.md
-index c3e123e..c2ab910 100644
+index c3e123e..6a1cf44 100644
 --- a/SECURITY.md
 +++ b/SECURITY.md
 @@ -118,6 +118,7 @@ approval, and a regression against any of them is treated as a vulnerability.
@@ -344,7 +346,7 @@ index c3e123e..c2ab910 100644
  | `session.json` and `config.yaml` are git-ignored. The process runs with `umask 077`. | `.gitignore`, `src/main.ts` |
  | Logs never contain credentials, tokens, QR URLs, PINs, key material, or package error objects. Internal errors are logged as short codes locally; clients only ever receive a generic message. | `src/ws/hub.ts`, project rule |
  | On logout or auth failure, the message cache, media cache and read state are cleared from memory. | `src/ws/hub.ts` |
-+| Member-name lookups, retry cooldowns and delivery queues belong to the current account. Logout invalidates queued work; obsolete lookups cannot start further batches or set the next account's cooldowns, and new-account messages do not wait for old lookups. Already-issued external requests may still complete, but their results cannot cross the account boundary. The existing five-minute retry cooldown uses monotonic elapsed time, unaffected by wall-clock corrections; retry remains demand-driven. Pending lookups for the same OpenChat member are shared across chats in that session, without extending each caller's five-second wait or sharing administrator authorization checks. Completion/failure releases the shared entry; logout clears it and stale results cannot remove a new session's lookup. | `src/line/provider.ts` |
++| Member-name lookups, retry cooldowns and delivery queues belong to the current account. Logout invalidates queued work; obsolete lookups cannot start further batches or set the next account's cooldowns, and new-account messages do not wait for old lookups. Already-issued external requests may still complete, but their results cannot cross the account boundary. The existing five-minute retry cooldown uses monotonic elapsed time, unaffected by wall-clock corrections; retry remains demand-driven. Pending lookups for the same OpenChat member and overlapping IDs in talk contact batches are shared across chats in that session; only new contact IDs are sent, with the existing 100-contact batch bound. This does not extend each caller's five-second wait or share administrator authorization checks. Completion/failure releases the shared entry; logout clears it and stale results cannot remove a new session's lookup. | `src/line/provider.ts` |
 +| In-flight owned-sticker catalog loads are shared only within one login session. Logout detaches the pending load; old completions cannot populate the next account's cache, clear its pending load or start further metadata batches. Already-issued requests may still complete, but their results cannot cross the account boundary. Failures release the shared work for a later demand-driven retry; per-connection request quotas are unchanged. | `src/line/provider.ts`, `src/ws/hub.ts` |
  | Decrypt or parse failures **fail closed**: a placeholder is shown; content is never guessed. | project rule |
  
@@ -380,7 +382,7 @@ index c7143f7..59cd0c4 100644
      if (this.events.length >= this.max) return false;
      this.events.push(now);
 diff --git a/src/line/provider.ts b/src/line/provider.ts
-index 58f8902..2c9c086 100644
+index 58f8902..e65e975 100644
 --- a/src/line/provider.ts
 +++ b/src/line/provider.ts
 @@ -3,7 +3,7 @@ import { BaseClient, type Device, type FetchLike } from "@evex/linejs/base";
@@ -410,13 +412,14 @@ index 58f8902..2c9c086 100644
  
  const FRIEND_BATCH = 100;
  const FRIEND_BATCH_CONCURRENCY = 3;
-@@ -154,12 +158,14 @@ export class EvexLineProvider implements LineProvider {
+@@ -154,12 +158,15 @@ export class EvexLineProvider implements LineProvider {
    // Names and pictures keyed by mid. LINE events carry only mids, so these are learned from the
    // friend list, profile lookups and (for OpenChat history) the sender names inside events.
    private profiles = new Map<string, MemberProfile>();
 -  // mid -> time before which a failed lookup is not retried.
 +  // mid -> monotonic time before which a failed lookup is not retried.
    private lookupMisses = new Map<string, number>();
++  private contactLookups = new Map<string, Promise<void>>();
 +  private squareMemberLookups = new Map<string, Promise<void>>();
    // Per chat, the tail of its delivery chain: one slow member lookup holds back only its own chat.
    private deliveries = new Map<string, Promise<void>>();
@@ -426,7 +429,7 @@ index 58f8902..2c9c086 100644
    // Messages whose media the browser may ask for, newest last. Requests are only honoured for
    // messages seen here, so the browser cannot use this session to probe arbitrary LINE objects.
    private mediaOrigins = new Map<string, { raw: LineMessage; square: boolean }>();
-@@ -420,11 +426,18 @@ export class EvexLineProvider implements LineProvider {
+@@ -420,11 +427,18 @@ export class EvexLineProvider implements LineProvider {
          signal: AbortSignal.timeout(STICKER_TIMEOUT_MS),
          redirect: "error",
        });
@@ -450,7 +453,7 @@ index 58f8902..2c9c086 100644
        return { mime: "image/png", bytes };
      }
      return undefined;
-@@ -437,11 +450,14 @@ export class EvexLineProvider implements LineProvider {
+@@ -437,11 +451,14 @@ export class EvexLineProvider implements LineProvider {
    async fetchAvatar(host: AvatarHost, hash: string, full: boolean): Promise<MediaBytes | undefined> {
      const origin = host === "profile" ? "https://profile.line-scdn.net" : "https://obs.line-scdn.net";
      const response = await fetch(`${origin}/${hash}${full ? "" : "/preview"}`, { signal: AbortSignal.timeout(STICKER_TIMEOUT_MS), redirect: "error" });
@@ -470,7 +473,7 @@ index 58f8902..2c9c086 100644
      return { mime, bytes };
    }
  
-@@ -451,11 +467,14 @@ export class EvexLineProvider implements LineProvider {
+@@ -451,11 +468,14 @@ export class EvexLineProvider implements LineProvider {
          signal: AbortSignal.timeout(STICKER_TIMEOUT_MS),
          redirect: "error",
        });
@@ -490,7 +493,7 @@ index 58f8902..2c9c086 100644
        return { mime, bytes };
      }
      return undefined;
-@@ -467,10 +486,13 @@ export class EvexLineProvider implements LineProvider {
+@@ -467,10 +487,13 @@ export class EvexLineProvider implements LineProvider {
        signal: AbortSignal.timeout(STICKER_TIMEOUT_MS),
        redirect: "error",
      });
@@ -508,7 +511,7 @@ index 58f8902..2c9c086 100644
      return { mime: "image/png", bytes };
    }
  
-@@ -480,7 +502,18 @@ export class EvexLineProvider implements LineProvider {
+@@ -480,7 +503,18 @@ export class EvexLineProvider implements LineProvider {
     */
    async fetchStickerPackages(): Promise<StickerPackage[]> {
      const client = this.requireClient();
@@ -528,7 +531,7 @@ index 58f8902..2c9c086 100644
      const result: unknown = await client.base.request.request(
        LINEStruct.getOwnedProductSummaries_args({ shopId: "stickershop", offset: 0, limit: 200, locale: { language: "zh", country: "TW" }, request: {} }),
        "getOwnedProductSummaries",
-@@ -488,6 +521,7 @@ export class EvexLineProvider implements LineProvider {
+@@ -488,6 +522,7 @@ export class EvexLineProvider implements LineProvider {
        true,
        "/TSHOP4",
      );
@@ -536,7 +539,7 @@ index 58f8902..2c9c086 100644
      const owned = parseOwnedProducts(result);
      const packages: StickerPackage[] = [];
      for (let offset = 0; offset < owned.length; offset += PACK_META_CONCURRENCY) {
-@@ -497,9 +531,10 @@ export class EvexLineProvider implements LineProvider {
+@@ -497,9 +532,10 @@ export class EvexLineProvider implements LineProvider {
          if (stickerIds.length === 0) return undefined;
          return { packageId: product.packageId, name: meta?.name || product.name || `貼圖包 ${product.packageId}`, stickerIds, animated: meta?.animated ?? false };
        }));
@@ -548,7 +551,7 @@ index 58f8902..2c9c086 100644
      return packages;
    }
  
-@@ -509,8 +544,23 @@ export class EvexLineProvider implements LineProvider {
+@@ -509,8 +545,23 @@ export class EvexLineProvider implements LineProvider {
          signal: AbortSignal.timeout(STICKER_TIMEOUT_MS),
          redirect: "error",
        });
@@ -574,7 +577,7 @@ index 58f8902..2c9c086 100644
        return text.length > 1_000_000 ? undefined : parsePackageMeta(JSON.parse(text));
      } catch {
        // The id ranges from the product list still give a usable (if untitled) package.
-@@ -564,18 +614,9 @@ export class EvexLineProvider implements LineProvider {
+@@ -564,18 +615,9 @@ export class EvexLineProvider implements LineProvider {
      return bytes && bytes.length > 0 && bytes.length <= this.downloadMaxBytes ? bytes : undefined;
    }
  
@@ -596,7 +599,7 @@ index 58f8902..2c9c086 100644
        await response.body?.cancel();
        return undefined;
      }
-@@ -584,13 +625,30 @@ export class EvexLineProvider implements LineProvider {
+@@ -584,13 +626,30 @@ export class EvexLineProvider implements LineProvider {
      let total = 0;
      for (let part = await reader.read(); !part.done; part = await reader.read()) {
        total += part.value.length;
@@ -629,7 +632,7 @@ index 58f8902..2c9c086 100644
    }
  
    async fetchReadPositions(channel: ChannelRef): Promise<ReadPosition[]> {
-@@ -615,11 +673,19 @@ export class EvexLineProvider implements LineProvider {
+@@ -615,11 +674,19 @@ export class EvexLineProvider implements LineProvider {
     * the generic member name until the retry delay passes.
     */
    private async resolveMembers(client: Client, source: "talk" | "square", mids: Iterable<string>): Promise<void> {
@@ -654,7 +657,7 @@ index 58f8902..2c9c086 100644
      if (pending.length === 0) return;
      const timeout = Promise.withResolvers<void>();
      const timer = setTimeout(timeout.resolve, LOOKUP_TIMEOUT_MS);
-@@ -628,10 +694,11 @@ export class EvexLineProvider implements LineProvider {
+@@ -628,46 +695,131 @@ export class EvexLineProvider implements LineProvider {
      } finally {
        clearTimeout(timer);
      }
@@ -668,7 +671,49 @@ index 58f8902..2c9c086 100644
        for (const [mid, until] of this.lookupMisses) if (until <= now) this.lookupMisses.delete(mid);
      }
    }
-@@ -652,22 +719,85 @@ export class EvexLineProvider implements LineProvider {
+ 
+   private async lookupContacts(client: Client, mids: string[]): Promise<void> {
+     for (let offset = 0; offset < mids.length; offset += CONTACT_BATCH) {
+-      try {
+-        const { contacts } = await client.base.talk.getContactsV2({ mids: mids.slice(offset, offset + CONTACT_BATCH) });
+-        if (this.client !== client) return;
+-        for (const { contact } of Object.values(contacts ?? {})) {
+-          if (contact?.mid) this.rememberProfile(contact.mid, contact.displayNameOverridden || contact.displayName, avatarMediaId("profile", contact.pictureStatus), true);
+-        }
+-      } catch {
+-        // Unresolved mids get a retry delay in resolveMembers.
++      if (this.client !== client) return;
++      const batch: string[] = [];
++      const waiting = new Set<Promise<void>>();
++      const end = Math.min(offset + CONTACT_BATCH, mids.length);
++      for (let index = offset; index < end; index += 1) {
++        const mid = mids[index]!;
++        const pending = this.contactLookups.get(mid);
++        if (pending) waiting.add(pending);
++        else batch.push(mid);
++      }
++      if (batch.length > 0) {
++        const pending = this.loadContacts(client, batch).finally(() => {
++          for (const mid of batch) if (this.contactLookups.get(mid) === pending) this.contactLookups.delete(mid);
++        });
++        for (const mid of batch) this.contactLookups.set(mid, pending);
++        waiting.add(pending);
+       }
++      await Promise.all(waiting);
++    }
++  }
++
++  private async loadContacts(client: Client, mids: string[]): Promise<void> {
++    try {
++      const { contacts } = await client.base.talk.getContactsV2({ mids });
++      if (this.client !== client) return;
++      for (const { contact } of Object.values(contacts ?? {})) {
++        if (contact?.mid) this.rememberProfile(contact.mid, contact.displayNameOverridden || contact.displayName, avatarMediaId("profile", contact.pictureStatus), true);
++      }
++    } catch {
++      // Unresolved mids get a retry delay in resolveMembers.
+     }
+   }
  
    private async lookupSquareMembers(client: Client, mids: string[]): Promise<void> {
      for (let offset = 0; offset < mids.length; offset += SQUARE_LOOKUP_CONCURRENCY) {
@@ -760,7 +805,7 @@ index 58f8902..2c9c086 100644
    async fetchHistory(channel: ChannelRef, limit: number, before?: string): Promise<HistoryPage> {
      const client = this.requireClient();
      return channel.kind === "square"
-@@ -717,9 +847,17 @@ export class EvexLineProvider implements LineProvider {
+@@ -717,9 +869,17 @@ export class EvexLineProvider implements LineProvider {
      let end = all.length;
      if (before !== undefined) {
        const match = /^(\d+):(\d{1,24})$/.exec(before);
@@ -781,7 +826,7 @@ index 58f8902..2c9c086 100644
      }
      const start = Math.max(0, end - limit);
      const messages = all.slice(start, end);
-@@ -735,8 +873,8 @@ export class EvexLineProvider implements LineProvider {
+@@ -735,8 +895,8 @@ export class EvexLineProvider implements LineProvider {
    private async loadSquareMessages(client: Client, squareChatMid: string): Promise<Message[]> {
      const cached = this.squareCache.get(squareChatMid);
      if (cached?.loading) return cached.loading;
@@ -792,7 +837,7 @@ index 58f8902..2c9c086 100644
      // Take-backs are permanent; reaction snapshots are not. Only events arriving during this
      // walk override its history statuses, otherwise an expired live snapshot would win forever.
      if (cached) for (const [id, update] of cached.updates) {
-@@ -801,7 +939,7 @@ export class EvexLineProvider implements LineProvider {
+@@ -801,7 +961,7 @@ export class EvexLineProvider implements LineProvider {
      entry.messages.sort((a, b) => this.compareSquareMessages(a, b));
      for (const [id, update] of entry.updates) this.applySquareUpdate(entry, id, update);
      this.boundSquareHistory(entry);
@@ -801,7 +846,7 @@ index 58f8902..2c9c086 100644
      return entry.messages;
    }
  
-@@ -850,10 +988,14 @@ export class EvexLineProvider implements LineProvider {
+@@ -850,10 +1010,14 @@ export class EvexLineProvider implements LineProvider {
    private rememberSquareMessage(message: Message): void {
      const cached = this.squareCache.get(message.channelId);
      if (!cached) return;
@@ -820,10 +865,11 @@ index 58f8902..2c9c086 100644
      const origin = this.mediaOrigins.get(message.messageId);
      if (origin?.square) cached.origins.set(message.messageId, origin.raw);
      const update = cached.updates.get(message.messageId);
-@@ -1184,9 +1326,12 @@ export class EvexLineProvider implements LineProvider {
+@@ -1184,9 +1348,13 @@ export class EvexLineProvider implements LineProvider {
      this.client = undefined;
      this.profiles.clear();
      this.lookupMisses.clear();
++    this.contactLookups.clear();
 +    this.squareMemberLookups.clear();
 +    this.deliveries.clear();
      this.mediaOrigins.clear();
@@ -1809,7 +1855,7 @@ index 3137b0f..89d18f0 100644
 +  assert.equal(media.getUpload(id), undefined);
 +});
 diff --git a/test/provider.test.mjs b/test/provider.test.mjs
-index 3dae4b2..1213148 100644
+index 3dae4b2..b965a32 100644
 --- a/test/provider.test.mjs
 +++ b/test/provider.test.mjs
 @@ -17,6 +17,8 @@ function fakeBase(overrides = {}) {
@@ -1868,10 +1914,186 @@ index 3dae4b2..1213148 100644
  test("a slow member lookup holds back only its own chat; each chat keeps arrival order", async () => {
    let release;
    const gate = new Promise((resolve) => { release = resolve; });
-@@ -72,6 +94,303 @@ test("a slow member lookup holds back only its own chat; each chat keeps arrival
+@@ -72,6 +94,479 @@ test("a slow member lookup holds back only its own chat; each chat keeps arrival
    assert.equal(received[1].message.senderName, `名-${slow.slice(-3)}`);
  });
  
++test("overlapping talk histories query each contact once and release live messages independently", async () => {
++  const firstMembers = Array.from({ length: 100 }, (_, index) => mid(index + 1));
++  const secondMembers = Array.from({ length: 100 }, (_, index) => mid(index + 51));
++  const calls = [], gates = [];
++  const name = (member) => member === mid(75) ? "偏好名稱" : `查得-${member}`;
++  const base = fakeBase({ talk: {
++    async getRecentMessagesV2({ messageBoxId, messagesCount }) {
++      assert.equal(messagesCount, 100);
++      const members = messageBoxId === GROUP_A ? firstMembers : secondMembers;
++      return members.map((member, index) => talk(String(index + (messageBoxId === GROUP_A ? 1 : 1001)), messageBoxId, member, `歷史${index}`).raw);
++    },
++    async getContactsV2({ mids }) {
++      calls.push([...mids]);
++      const gate = Promise.withResolvers();
++      gates.push(gate);
++      await gate.promise;
++      return { contacts: Object.fromEntries(mids.map((member) => [member, { contact: {
++        mid: member, displayName: `查得-${member}`, displayNameOverridden: member === mid(75) ? "偏好名稱" : undefined,
++      } }])) };
++    },
++  } });
++  const { provider, received, emit } = await activeProvider(base);
++  let first, second, secondDone = false;
++  try {
++    first = provider.fetchHistory({ channelId: GROUP_A, kind: "group" }, 100);
++    await new Promise((resolve) => setImmediate(resolve));
++    assert.deepEqual(calls, [firstMembers]);
++    second = provider.fetchHistory({ channelId: GROUP_B, kind: "group" }, 100).then((page) => { secondDone = true; return page; });
++    await new Promise((resolve) => setImmediate(resolve));
++    assert.deepEqual(calls, [firstMembers, secondMembers.slice(50)]);
++    emit("message", talk("3000", GROUP_B, mid(75), "即時訊息"));
++    await new Promise((resolve) => setImmediate(resolve));
++    assert.equal(calls.length, 2);
++    gates[0].resolve();
++    const firstPage = await first;
++    await provider.deliveries.get(GROUP_B);
++    assert.equal(secondDone, false, "the second history still needs its new contacts");
++    assert.equal(received[0].message.senderName, "偏好名稱", "the live message only waits for its own contact");
++    gates[1].resolve();
++    const secondPage = await second;
++    assert.deepEqual(firstPage.messages.map((message) => message.senderName), firstMembers.map(name));
++    assert.deepEqual(secondPage.messages.map((message) => message.senderName), secondMembers.map(name));
++    assert.deepEqual(calls, [firstMembers, secondMembers.slice(50)]);
++  } finally {
++    for (const gate of gates) gate.resolve();
++    await provider.close();
++    await Promise.allSettled([first, second]);
++  }
++});
++
++test("shared contact batches preserve independently started caller deadlines and late results", async (t) => {
++  t.mock.timers.enable({ apis: ["setTimeout"] });
++  const gate = Promise.withResolvers();
++  const profile = { contacts: { [mid(1)]: { contact: { mid: mid(1), displayName: "遲到的名稱" } } } };
++  let calls = 0;
++  const base = fakeBase({ talk: {
++    async getContactsV2() { calls += 1; return gate.promise; },
++  } });
++  const { provider, received, emit } = await activeProvider(base);
++  try {
++    emit("message", talk("1", GROUP_A, mid(1), "第一個等待者"));
++    await new Promise((resolve) => setImmediate(resolve));
++    t.mock.timers.tick(1000);
++    emit("message", talk("2", GROUP_B, mid(1), "第二個等待者"));
++    await new Promise((resolve) => setImmediate(resolve));
++    assert.equal(calls, 1);
++    t.mock.timers.tick(3999);
++    await new Promise((resolve) => setImmediate(resolve));
++    assert.deepEqual(received, []);
++    t.mock.timers.tick(1);
++    await provider.deliveries.get(GROUP_A);
++    assert.deepEqual(received.map(({ message }) => message.messageId), ["1"]);
++    t.mock.timers.tick(999);
++    await new Promise((resolve) => setImmediate(resolve));
++    assert.deepEqual(received.map(({ message }) => message.messageId), ["1"]);
++    t.mock.timers.tick(1);
++    await provider.deliveries.get(GROUP_B);
++    assert.deepEqual(received.map(({ message }) => message.messageId), ["1", "2"]);
++    gate.resolve(profile);
++    await new Promise((resolve) => setImmediate(resolve));
++    emit("message", talk("3", GROUP_A, mid(1), "已知成員"));
++    await provider.deliveries.get(GROUP_A);
++    assert.equal(received.at(-1).message.senderName, "遲到的名稱");
++    assert.equal(calls, 1);
++  } finally {
++    gate.resolve(profile);
++    await provider.close();
++  }
++});
++
++test("failed shared contact batches release their entries for demand-driven retry after cooldown", async (t) => {
++  let elapsed = 0;
++  t.mock.method(performance, "now", () => elapsed);
++  const gates = [];
++  const profile = { contacts: { [mid(1)]: { contact: { mid: mid(1), displayName: "恢復成員" } } } };
++  const base = fakeBase({ talk: {
++    async getContactsV2() { const gate = Promise.withResolvers(); gates.push(gate); return gate.promise; },
++  } });
++  const { provider, received, errors, emit } = await activeProvider(base);
++  try {
++    emit("message", talk("1", GROUP_A, mid(1), "第一則"));
++    emit("message", talk("2", GROUP_B, mid(1), "第二則"));
++    await new Promise((resolve) => setImmediate(resolve));
++    assert.equal(gates.length, 1);
++    gates[0].reject(new Error("unavailable"));
++    await Promise.all([provider.deliveries.get(GROUP_A), provider.deliveries.get(GROUP_B)]);
++    elapsed = 299_999;
++    emit("message", talk("3", GROUP_A, mid(1), "等待退避"));
++    await provider.deliveries.get(GROUP_A);
++    assert.equal(gates.length, 1);
++    elapsed = 300_000;
++    emit("message", talk("4", GROUP_B, mid(1), "可以重試"));
++    emit("message", talk("5", GROUP_A, mid(1), "共用重試"));
++    await new Promise((resolve) => setImmediate(resolve));
++    assert.equal(gates.length, 2);
++    gates[1].resolve(profile);
++    await Promise.all([provider.deliveries.get(GROUP_A), provider.deliveries.get(GROUP_B)]);
++    assert.deepEqual(received.filter(({ message }) => message.channelId === GROUP_A).map(({ message }) => message.messageId), ["1", "3", "5"]);
++    assert.deepEqual(received.filter(({ message }) => message.channelId === GROUP_B).map(({ message }) => message.messageId), ["2", "4"]);
++    assert.deepEqual(Object.fromEntries(received.filter(({ message }) => ["4", "5"].includes(message.messageId)).map(({ message }) => [message.messageId, message.senderName])), { 4: "恢復成員", 5: "恢復成員" });
++    assert.deepEqual(errors, []);
++  } finally {
++    for (const gate of gates) gate.resolve(profile);
++    await provider.close();
++  }
++});
++
++test("old contact batches cannot remove the next account's shared lookup", async (t) => {
++  for (const fails of [false, true]) {
++    await t.test(fails ? "old batch fails" : "old batch succeeds", async () => {
++      const oldGate = Promise.withResolvers(), newGate = Promise.withResolvers();
++      const oldStarted = Promise.withResolvers(), newStarted = Promise.withResolvers();
++      let newCalls = 0;
++      const base = fakeBase({ talk: {
++        async getContactsV2() { oldStarted.resolve(); return oldGate.promise; },
++      } });
++      const { provider, received, errors, emit } = await activeProvider(base);
++      emit("message", talk("1", GROUP_A, mid(1), "舊帳號訊息"));
++      await oldStarted.promise;
++      const oldTail = provider.deliveries.get(GROUP_A);
++      const deliveries = [oldTail];
++      const reply = (displayName) => ({ contacts: { [mid(1)]: { contact: { mid: mid(1), displayName } } } });
++      try {
++        await provider.logout();
++        const nextBase = fakeBase({ talk: {
++          async getContactsV2() { newCalls += 1; newStarted.resolve(); return newGate.promise; },
++        } });
++        nextBase.profile = { mid: mid(99), displayName: "新帳號" };
++        provider.base = nextBase;
++        await provider.activate(nextBase);
++        emit("message", talk("2", GROUP_A, mid(1), "新帳號第一則"));
++        deliveries.push(provider.deliveries.get(GROUP_A));
++        await newStarted.promise;
++        if (fails) oldGate.reject(new Error("old batch unavailable"));
++        else oldGate.resolve(reply("舊帳號名稱"));
++        await oldTail;
++        emit("message", talk("3", GROUP_B, mid(1), "新帳號第二則"));
++        deliveries.push(provider.deliveries.get(GROUP_B));
++        await new Promise((resolve) => setImmediate(resolve));
++        assert.equal(newCalls, 1);
++        newGate.resolve(reply("新帳號名稱"));
++        await Promise.all(deliveries);
++        assert.deepEqual(received.map(({ message }) => ({ id: message.messageId, name: message.senderName })), [
++          { id: "2", name: "新帳號名稱" }, { id: "3", name: "新帳號名稱" },
++        ]);
++        assert.deepEqual(errors, []);
++      } finally {
++        oldGate.resolve(reply("舊帳號名稱"));
++        newGate.resolve(reply("新帳號名稱"));
++        await provider.close();
++        await Promise.all(deliveries);
++      }
++    });
++  }
++});
++
 +test("failed member lookups honor elapsed cooldown time across wall-clock corrections", async (t) => {
 +  const clock = { elapsed: 0, wall: Date.now() };
 +  t.mock.method(performance, "now", () => clock.elapsed);
@@ -2172,7 +2394,7 @@ index 3dae4b2..1213148 100644
  test("a message the hub fails on does not stop later deliveries in that chat", async () => {
    const base = fakeBase();
    const received = [];
-@@ -407,6 +726,350 @@ test("received stickers become sticker media ids only for numeric ids; animated
+@@ -407,6 +902,350 @@ test("received stickers become sticker media ids only for numeric ids; animated
    ]);
  });
  
@@ -2523,7 +2745,7 @@ index 3dae4b2..1213148 100644
  test("a received file becomes a download with a safe name; it is never served as inline media and a preview or taken-back file is not fetchable", async () => {
    const downloads = [];
    const base = fakeBase();
-@@ -501,7 +1164,9 @@ test("OpenChat concurrent history shares the walk and retains interleaved live d
+@@ -501,7 +1340,9 @@ test("OpenChat concurrent history shares the walk and retains interleaved live d
    assert.equal(await provider.fetchMessageMedia("11"), undefined);
  });
  
@@ -2534,7 +2756,7 @@ index 3dae4b2..1213148 100644
    let walks = 0;
    const other = "m" + "t".repeat(32);
    const base = fakeBase({ square: {
-@@ -518,12 +1183,94 @@ test("OpenChat paging survives an earlier live delivery and cache refresh; chats
+@@ -518,12 +1359,94 @@ test("OpenChat paging survives an earlier live delivery and cache refresh; chats
    await settle();
    const older = await provider.fetchHistory(channel, 2, newest.cursor);
    assert.deepEqual(older.messages.map((message) => message.messageId), ["1", "2"]);
@@ -2630,7 +2852,7 @@ index 3dae4b2..1213148 100644
  test("OpenChat walks deduplicate events, consume retained mutations, and authorize media only on the displayed page", async () => {
    const base = fakeBase({ square: {
      async fetchSquareChatEvents() {
-@@ -565,7 +1312,9 @@ test("OpenChat an invalidated in-flight walk cannot refill history or media afte
+@@ -565,7 +1488,9 @@ test("OpenChat an invalidated in-flight walk cannot refill history or media afte
    assert.equal(provider.mediaOrigins.size, 0);
  });
  
@@ -2641,7 +2863,7 @@ index 3dae4b2..1213148 100644
    const base = fakeBase({ square: {
      async fetchSquareChatEvents() { return { events: [squareEvent(1), squareEvent(2, SQUARE, "IMAGE")] }; },
      async getSquareMember() { return { squareMember: { displayName: "成員" } }; },
-@@ -580,7 +1329,7 @@ test("OpenChat own reaction changes and take-backs remain correct on the next ca
+@@ -580,7 +1505,7 @@ test("OpenChat own reaction changes and take-backs remain correct on the next ca
    assert.deepEqual((await provider.fetchHistory(channel, 50)).messages[0].reactions, { counts: { LOVE: 1 }, mine: "LOVE" });
    await provider.react(channel, "1", undefined);
    await provider.unsendMessage(channel, "2");
@@ -2650,7 +2872,7 @@ index 3dae4b2..1213148 100644
    const page = await provider.fetchHistory(channel, 50);
    assert.equal(page.messages[0].reactions, undefined);
    assert.equal(page.messages[1].unsent, true);
-@@ -621,7 +1370,9 @@ test("OpenChat live history remains bounded without shifting message-anchored cu
+@@ -621,7 +1546,9 @@ test("OpenChat live history remains bounded without shifting message-anchored cu
    assert.deepEqual((await provider.fetchHistory(channel, 2, latest.cursor)).messages.map((message) => message.messageId), ["5007", "5008"]);
  });
  
@@ -2661,7 +2883,7 @@ index 3dae4b2..1213148 100644
    let refreshed = false;
    let release;
    const gate = new Promise((resolve) => { release = resolve; });
-@@ -641,7 +1392,7 @@ test("OpenChat TTL refresh replaces old live reactions with current history whil
+@@ -641,7 +1568,7 @@ test("OpenChat TTL refresh replaces old live reactions with current history whil
    await provider.fetchHistory(channel, 50);
    emit("square:event", squareStatus(1, { 1: 2, 2: { 3: 2 } }));
    emit("square:event", squareStatus(2, { 1: 1, 2: { 3: 1 } }));
@@ -2670,7 +2892,7 @@ index 3dae4b2..1213148 100644
    refreshed = true;
    const refreshing = provider.fetchHistory(channel, 50);
    emit("square:event", squareStatus(2, { 1: 0, 2: {} }));
-@@ -650,3 +1401,78 @@ test("OpenChat TTL refresh replaces old live reactions with current history whil
+@@ -650,3 +1577,78 @@ test("OpenChat TTL refresh replaces old live reactions with current history whil
    assert.deepEqual(page.messages[0].reactions, { counts: { LOVE: 3 } }, "history replaces reactions from before this refresh");
    assert.equal(page.messages[1].reactions, undefined, "live removal during refresh still overrides the walked snapshot");
  });
