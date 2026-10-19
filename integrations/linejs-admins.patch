@@ -35,10 +35,10 @@ index 59cf16e..8ca4d78 100644
  
  LINE operation 與連線注意事項：linejs 未記載多數 operation 的參數排列，`SEND_CHAT_CHECKED`（手機已讀）只取 `param1` 且須為伺服器已知聊天室；群組／個人資料／聊天室成員變動不解析參數，只觸發節流的頻道清單重新整理（3 秒合併、最多每 30 秒一次），不得改成依參數猜測內容。頻道清單的最後一則訊息（`Channel.lastMessage`）是預覽，不登記媒體來源，不能藉此下載。WS 心跳：伺服器以協定層 Ping 每 30 秒檢查、兩輪無回應即關閉；網頁 `ping` 需 10 秒內收到 `pong`，回到前景立即探測。斷線記錄（網頁主控台、服務日誌 `WS_CLOSED`）只可含時間、close code、截短的 reason 與前後景狀態，不得含標頭、cookie 或 Token。
 diff --git a/PLAN.md b/PLAN.md
-index 49acd5b..b5bafbc 100644
+index 49acd5b..0b37fe3 100644
 --- a/PLAN.md
 +++ b/PLAN.md
-@@ -144,23 +144,56 @@
+@@ -144,23 +144,58 @@
  
  > 實作補完（協定版本仍為 2）：登出／換帳號以 session generation 作廢歷史、發送、回應、收回、已讀與頻道查詢的舊結果；歷史重新載入也同步清除已取消的回應。OpenChat 歷史採同聊天室 single-flight、時間＋訊息 id 錨點，快取最多 5 個聊天室各 5000 則、10 分鐘，合併即時訊息與狀態，過期時重新取得回應，僅已提供頁面的訊息授權媒體。網頁搜尋維持即時更新並跨聊天室依時間排序；初次歷史失敗可重試，回應更新不重建媒體 DOM，登出清除搜尋、私人畫面與通知。隔離測試與無頭靜音瀏覽器已驗證；尚未對本次變動重新進行真實 LINE Gate 驗收。
  
@@ -65,6 +65,8 @@ index 49acd5b..b5bafbc 100644
 +> CDN 拒絕回應回收：取消狀態碼或貼圖 Content-Type 驗證失敗後未使用的本文，保留既有錯誤、缺檔與圖片／metadata fallback，即使取消本身失敗亦同。原生 fetch＋本機 HTTP 串流，經實際 Provider／HTTP 媒體 API／WebSocket 清單驗證 18 個情境，拒絕本文不再持續傳輸；268 項測試通過，未連接真實 LINE。
 +
 +> 貼圖解析有界掃描：metadata 與商品 ID 區間收滿每包既有的 200 筆輸出後即停止尾端掃描，保留無效資料略過、順序／重複項目與後續貼圖包。實際 Provider＋WebSocket 驗證小型及五萬筆 fixture 完整回覆不變；本機基準分別量測正規化與 JSON.parse＋正規化，不宣稱免除 JSON 解析或實網延遲。268 項測試通過，未連接真實 LINE。
++
++> 已讀快照快取計時：十秒短期共用改用單調經過時間，校時前跳不重查、回撥不延長過期資料；即時已讀合併與登入隔離不變。實際 WebSocket 歷史開啟 fixture 驗證到期前重用、精確到期更新與即時位置保留；269 項測試通過，未連接真實 LINE。
 +
  > v1.15（小語裁示：JEV 詐騙分析，協定版本仍為 2）：`config.yaml` 新增選用區段 `jev`（`token`：TypeSafe API 金鑰，有值才啟用；`model`：預設 `jev-1.13.0`）。新增 Server → Client `scam:state`（`{ enabled }`，連線即送、只給網頁，不含金鑰）與 `scam:result`（`{ requestId, chatId, messageId, analysis: { probability, tactic?: { kind, confidence } } }`，只送給要求的連線），Client → Server `scam:check`（`{ requestId, chatId, messageId }`，僅網頁、每連線每分鐘 10 次）。伺服器只接受已顯示、非本帳號、未收回、已解密、非系統訊息的文字訊息，以自己快取的文字經 `src/jev/` 呼叫 `POST https://api.typesafe.ai/v1/systemone`（Noul 題問是否為詐騙、Choice 題問最接近的手法；題目用英文，因官方說明英文準確度最佳），回應 fail-closed；未設定金鑰回 `SCAM_CHECK_UNAVAILABLE`，失敗回 `SCAM_CHECK_FAILED`。網頁對別人的文字訊息右鍵出現「詐騙機率分析」，以官方範例門檻分級（> 0.8 高度疑似、≤ 0.2 不太像、其間無法確定）並註明為模型估計、文字已送至 TypeSafe。尚未以有效金鑰實測真實分析結果。
  
@@ -96,7 +98,7 @@ index 49acd5b..b5bafbc 100644
  | `channels` | `{ channels: Channel[] }`（snapshot，連線即送、變動重送） |
  | `messages` | `{ chatId, messages: Message[] }`（連線時快照，每個聊天室一個影格；舊訊息，不計未讀） |
  | `message` | `{ message: Message }`（即時新訊息） |
-@@ -190,6 +223,7 @@
+@@ -190,6 +225,7 @@
  | `message:react` | `{ requestId, chatId, messageId, reaction: "NICE"｜"LOVE"｜"FUN"｜"AMAZING"｜"SAD"｜"OMG"｜null }`（僅網頁，與 `message:send` 共用頻率上限） |
  | `scam:check` | `{ requestId, chatId, messageId }`（網頁每連線每分鐘 10 次；機器人限 `api.chats`、所有機器人合計每分鐘 10 次；只接受別人傳來、已顯示、未收回的文字訊息） |
  | `profile:get` | `{ requestId }`（自己的 `profile`；網頁與機器人皆可，不呼叫 LINE） |
@@ -104,7 +106,7 @@ index 49acd5b..b5bafbc 100644
  | `channels:refresh` | `{}` |
  | `api:token:create` / `api:token:revoke` | `{}`（產生或撤銷機器人 Token，並中斷所有機器人連線） |
  | `ping` | `{}` |
-@@ -197,7 +231,7 @@
+@@ -197,7 +233,7 @@
  ### 機器人 API（`/api/ws`）
  - 升級條件：`api.enabled`、**無 `Origin`**、`Authorization: Bearer linejs_…` 符合目前 Token；否則 403（同時超過 4 個連線回 429）。`Host` 不限制（同網頁）。
  - 連線時收到 `hello`、`auth:state`、`status`、`auth:ready`、僅含 `api.chats` 的 `channels`；之後只有這些聊天室的 `message`／`message:edit`。不重播、不給 `read`／`update:available`／`api:state`。
@@ -114,10 +116,10 @@ index 49acd5b..b5bafbc 100644
  
  ### HTTP
 diff --git a/README.en.md b/README.en.md
-index 6b97c31..1e99f5b 100644
+index 6b97c31..220e9bf 100644
 --- a/README.en.md
 +++ b/README.en.md
-@@ -26,7 +26,19 @@ flowchart LR
+@@ -26,7 +26,21 @@ flowchart LR
  
  The backend binds only to `127.0.0.1` by default (configurable in `config.yaml`; see “Configuration”), on port `3789` by default. The backend builds with `tsc` into `dist/`; the frontend builds with Vite into `dist/web/`. Messages are stored only in memory (up to 500 per channel, deduplicated by id, with edits overwriting existing messages), without a database. Stickers, profile pictures, and received media are cached by the backend in an LRU cache (200MB by default) and served over HTTP on the same port.
  
@@ -135,10 +137,12 @@ index 6b97c31..1e99f5b 100644
 +Concurrent sticker-catalog requests in one login session share the pending owned-product query and CDN metadata load, while each request still receives its own complete reply. Successful results keep the ten-minute cache, measured by monotonic elapsed time and unaffected by wall-clock corrections; failures can be retried by a later request. Logout detaches the shared work; old completions cannot affect the next account's cache or load, and start no further metadata batches. Already-issued requests may still complete. Existing quotas and the sticker-ID range fallback on metadata failure are unchanged.
 +
 +Sticker metadata and owned-product ID ranges stop scanning once the existing 200-entry output limit per package is reached. ID order, duplicate entries and subsequent packages are preserved.
++
++Read snapshots requested when the web page opens history retain their ten-second sharing window, measured by monotonic elapsed time rather than wall-clock time. Live read positions still merge during that window, and logout discards the old account's snapshots.
  
  ## Requirements
  
-@@ -164,18 +176,25 @@ Lets your own programs (bots) send and receive messages. **Disabled by default**
+@@ -164,18 +178,25 @@ Lets your own programs (bots) send and receive messages. **Disabled by default**
  | Bot → Service | `history:fetch` | `{ requestId, chatId, limit?, before? }`: the same pagination as the web interface, without a read-receipt snapshot |
  | Bot → Service | `scam:check` | `{ requestId, chatId, messageId }`: check with Jev a text message **from someone else** in `api.chats` that the service has shown (received live or returned by `history:fetch`); the server sends its own cached text. Requires `jev.token` (otherwise `SCAM_CHECK_UNAVAILABLE`); 10 per minute across all bots, each billed by TypeSafe. Success returns `scam:result { requestId, chatId, messageId, analysis: { probability, tactic? } }` |
  | Bot → Service | `profile:get` | `{ requestId }`: get your own ID and name at any time; returns `profile { requestId, profile: { userId, displayName, pictureId? } }` (the same as `auth:ready`; no LINE request; shares the 10-per-second-per-connection budget with `history:fetch`; returns `INVALID_REQUEST` when not signed in) |
@@ -168,10 +172,10 @@ index 6b97c31..1e99f5b 100644
  
  ```js
 diff --git a/README.ja.md b/README.ja.md
-index a6e80b5..add4452 100644
+index a6e80b5..47d2c4f 100644
 --- a/README.ja.md
 +++ b/README.ja.md
-@@ -26,7 +26,19 @@ flowchart LR
+@@ -26,7 +26,21 @@ flowchart LR
  
  バックエンドは既定で `127.0.0.1` のみにバインドします（`config.yaml` で変更できます。「設定」を参照）。既定のポートは `3789` です。バックエンドは `tsc` で `dist/` に、フロントエンドは Vite で `dist/web/` にビルドします。メッセージはメモリにのみ保存し（チャンネルごとに最大 500 件、同じ id は重複排除、編集は上書き）、データベースは使用しません。スタンプ、プロフィール画像、受信したメディアはバックエンドの LRU キャッシュ（既定 200MB）を経由し、同じポートの HTTP で配信します。
  
@@ -189,10 +193,12 @@ index a6e80b5..add4452 100644
 +同一ログインセッション内の同時スタンプ一覧要求は、処理中の所有商品照会と CDN メタデータ取得を共有します。各要求には個別に完全な応答を返します。成功結果のキャッシュは単調時計による経過時間で 10 分間とし、システム時刻の補正には影響されません。失敗後は後続の要求で再試行できます。ログアウト時に共有処理との関連を解除し、古い処理は新アカウントのキャッシュや取得処理に影響せず、後続のメタデータ取得バッチも開始しません。送信済みの要求は完了する場合があります。既存の回数制限と、メタデータ取得失敗時のスタンプ ID 範囲へのフォールバックは変更しません。
 +
 +スタンプのメタデータと所有商品の ID 範囲は、パッケージごとの既存の出力上限 200 件に達すると残りの走査を停止します。ID の順序、重複項目、後続のパッケージは維持します。
++
++Web ページで履歴を開いた際の既読スナップショットは、単調時計による経過時間で 10 秒間共有し、システム時刻の補正には影響されません。その間もリアルタイムの既読位置を統合し、ログアウト後は旧アカウントのスナップショットを引き継ぎません。
  
  ## 動作要件
  
-@@ -164,18 +176,25 @@ HTTP：`GET /media/:mediaId`（スタンプ、スタンプパックのアイコ
+@@ -164,18 +178,25 @@ HTTP：`GET /media/:mediaId`（スタンプ、スタンプパックのアイコ
  | ボット → サービス | `history:fetch` | `{ requestId, chatId, limit?, before? }`：Web ページと同じページ取得ですが、既読 snapshot は含みません |
  | ボット → サービス | `scam:check` | `{ requestId, chatId, messageId }`：`api.chats` 内の**相手から届いた**、サービスが表示済み（リアルタイム受信または `history:fetch` で取得）のテキストメッセージを Jev で分析します。サーバーは自身のキャッシュのテキストを送ります。`jev.token` の設定が必要で（未設定時は `SCAM_CHECK_UNAVAILABLE`）、全ボット合計で毎分 10 回、1 回ごとに TypeSafe の料金がかかります。成功時は `scam:result { requestId, chatId, messageId, analysis: { probability, tactic? } }` |
  | ボット → サービス | `profile:get` | `{ requestId }`：自分の ID と名前をいつでも取得できます。`profile { requestId, profile: { userId, displayName, pictureId? } }` を返します（`auth:ready` と同じ内容。LINE には問い合わせず、`history:fetch` と接続ごとに毎秒 10 回の枠を共有。未ログイン時は `INVALID_REQUEST`） |
@@ -222,10 +228,10 @@ index a6e80b5..add4452 100644
  
  ```js
 diff --git a/README.md b/README.md
-index 7704eb9..b16f930 100644
+index 7704eb9..e9cff3b 100644
 --- a/README.md
 +++ b/README.md
-@@ -26,7 +26,19 @@ flowchart LR
+@@ -26,7 +26,21 @@ flowchart LR
  
  後端預設只綁定 `127.0.0.1`（可在 `config.yaml` 改，見〈設定〉），預設埠 `3789`。後端 `tsc` 建置至 `dist/`；前端 Vite 建置至 `dist/web/`。訊息只存記憶體（每頻道最多 500 則，同 id 去重，編輯覆寫），不使用資料庫；貼圖、大頭照與收到的媒體經後端以 LRU（預設 200MB）快取後由同埠 HTTP 提供。
  
@@ -243,10 +249,12 @@ index 7704eb9..b16f930 100644
 +同一登入工作階段的並行貼圖清單要求共用尚未完成的商店查詢與 CDN metadata 載入，每個要求仍各自收到完整回覆。成功後維持十分鐘快取，以單調經過時間計算，不受系統校時影響；失敗可由後續要求重試。登出解除共用關聯，舊工作不影響新帳號的快取或載入，也不再啟動後續 metadata 批次；已送出的要求可能仍會完成。既有配額與 metadata 失敗時的貼圖 ID 區間 fallback 不變。
 +
 +貼圖 metadata 與商品 ID 區間收滿每包既有的 200 筆輸出後即停止掃描其餘項目；不改變 ID 順序、重複項目或後續貼圖包。
++
++網頁開啟歷史時的已讀快照維持十秒短期共用，以單調經過時間判斷，不受系統校時影響；期間仍合併即時已讀位置，登出後不沿用舊帳號快照。
  
  ## 環境需求
  
-@@ -164,18 +176,25 @@ HTTP：`GET /media/:mediaId`（貼圖、貼圖包圖示、大頭照與原圖、
+@@ -164,18 +178,25 @@ HTTP：`GET /media/:mediaId`（貼圖、貼圖包圖示、大頭照與原圖、
  | 機器人 → 服務 | `history:fetch` | `{ requestId, chatId, limit?, before? }`：與網頁相同的分頁，但不附已讀快照 |
  | 機器人 → 服務 | `scam:check` | `{ requestId, chatId, messageId }`：以 Jev 分析 `api.chats` 內**別人傳來**、服務已顯示（即時收到或 `history:fetch` 取得）的文字訊息；伺服器送自己快取的文字。需設定 `jev.token`（否則 `SCAM_CHECK_UNAVAILABLE`），所有機器人合計每分鐘 10 次，每次依 TypeSafe 計費。成功回 `scam:result { requestId, chatId, messageId, analysis: { probability, tactic? } }` |
  | 機器人 → 服務 | `profile:get` | `{ requestId }`：隨時取得自己的 ID 與名稱，回 `profile { requestId, profile: { userId, displayName, pictureId? } }`（同 `auth:ready`；不呼叫 LINE，與 `history:fetch` 共用每連線每秒 10 次；未登入回 `INVALID_REQUEST`） |
@@ -800,7 +808,7 @@ index 9307238..a67a356 100644
  export interface Mention {
    userId: string;
 diff --git a/src/ws/hub.ts b/src/ws/hub.ts
-index 4ae6a53..37f0cf1 100644
+index 4ae6a53..fa285bf 100644
 --- a/src/ws/hub.ts
 +++ b/src/ws/hub.ts
 @@ -12,7 +12,7 @@ import type { Channel, ChannelKind, Message, Reactions, ReadPosition } from "../
@@ -911,6 +919,24 @@ index 4ae6a53..37f0cf1 100644
    }
  
    function apiState(): ServerFrame {
+@@ -266,7 +281,7 @@ export function createHub(options: HubOptions): Hub {
+     // Opening a chat in several tabs, or reopening it, shares one LINE lookup for a short while:
+     // live read events keep `seenReads` current in between.
+     const recent = readFetches.get(chatId);
+-    let fetching = recent && Date.now() - recent.at < READ_RANGE_FRESH_MS ? recent.done : undefined;
++    let fetching = recent && performance.now() - recent.at < READ_RANGE_FRESH_MS ? recent.done : undefined;
+     if (!fetching) {
+       fetching = provider.fetchReadPositions({ channelId: chatId, kind }).then(
+         // A logout while LINE was answering clears readFetches: the old account's receipts are dropped.
+@@ -277,7 +292,7 @@ export function createHub(options: HubOptions): Hub {
+           logFailure("READ_RANGE_FAILED", error);
+         },
+       );
+-      readFetches.set(chatId, { at: Date.now(), done: fetching });
++      readFetches.set(chatId, { at: performance.now(), done: fetching });
+     }
+     await fetching;
+     if (account !== generation) return;
 @@ -296,10 +311,11 @@ export function createHub(options: HubOptions): Hub {
      if (scope && request.kind !== "text") return fail(socket, "INVALID_REQUEST", request.requestId);
      const target = { channelId: request.chatId, kind: channel.kind };
@@ -1113,7 +1139,7 @@ index 31fd7a2..9518ee1 100644
    const base = header(frame);
    if (!base) return { ok: false, ...(requestIdOf(frame) ? { requestId: requestIdOf(frame)! } : {}) };
 diff --git a/test/hub.test.mjs b/test/hub.test.mjs
-index e3ebc41..15e88f1 100644
+index e3ebc41..ae4abbe 100644
 --- a/test/hub.test.mjs
 +++ b/test/hub.test.mjs
 @@ -5,6 +5,7 @@ import { createServer } from "node:net";
@@ -1124,7 +1150,46 @@ index e3ebc41..15e88f1 100644
  import { createWebServer } from "../dist/http/server.js";
  import { createHub } from "../dist/ws/hub.js";
  import { ApiTokenStore } from "../dist/http/apiToken.js";
-@@ -1571,3 +1572,376 @@ test("a connection that stops answering pings is closed by the next heartbeat; o
+@@ -920,6 +921,38 @@ test("read positions seen live are replayed on the next open, merged with LINE's
+   await env.client.until(() => env.client.frames.filter((frame) => frame.type === "read" && frame.positions.length === 3).length === 2);
+ });
+ 
++test("read snapshots expire by elapsed time while live positions survive wall-clock corrections", async (t) => {
++  const clock = { elapsed: 1000, wall: Date.now() };
++  t.mock.method(performance, "now", () => clock.elapsed);
++  t.mock.method(Date, "now", () => clock.wall);
++  const env = await signedIn(t);
++  const readFrames = () => env.client.frames.filter((frame) => frame.type === "read" && frame.chatId === CHAT);
++  let sequence = 0;
++  const reopen = async (expected, lookups) => {
++    const count = readFrames().length;
++    const requestId = `read-clock-${sequence++}`;
++    env.request({ type: "history:fetch", requestId, chatId: CHAT });
++    await env.client.until((frame) => frame.type === "history" && frame.requestId === requestId);
++    await env.client.until(() => readFrames().length > count);
++    assert.deepEqual(readFrames().at(-1).positions, expected);
++    assert.equal(env.provider.calls.filter(([kind]) => kind === "read-range").length, lookups);
++  };
++  env.provider.readPositions = [{ readerId: "remote", messageId: "100" }];
++  await reopen(env.provider.readPositions, 1);
++  const live = { readerId: "live", messageId: "900" };
++  env.hub.handleRead(CHAT, live);
++  await env.client.until((frame) => frame.type === "read" && frame.positions.some((position) => position.readerId === "live"));
++  const cached = [{ readerId: "remote", messageId: "100" }, live];
++  env.provider.readPositions = [{ readerId: "remote", messageId: "400" }];
++  clock.wall += 10_001;
++  await reopen(cached, 1);
++  clock.wall -= 20_002;
++  clock.elapsed = 10_999;
++  await reopen(cached, 1);
++  clock.elapsed = 11_000;
++  await reopen([...env.provider.readPositions, live], 2);
++});
++
+ test("an open chat is reported read once per position, only for messages the server has shown", async (t) => {
+   const env = await signedIn(t);
+   env.provider.history = { messages: [older("1001", 10), older("1002", 20), older("1003", 30)], hasMore: false };
+@@ -1571,3 +1604,376 @@ test("a connection that stops answering pings is closed by the next heartbeat; o
    assert.equal(healthy.socket.readyState, WebSocket.OPEN);
    assert.equal(pings, 2);
  });
