@@ -44,7 +44,8 @@ export function isMessage(value: unknown): value is Message {
   return typeof value.messageId === "string" && /^\d{1,24}$/.test(value.messageId)
     && typeof value.channelId === "string" && /^[ucrsm][A-Za-z0-9]{10,64}$/.test(value.channelId)
     && typeof value.senderId === "string" && typeof value.senderName === "string"
-    && ["user", "group", "room", "square"].includes(String(value.channelKind))
+    && (value.channelKind === "user" || value.channelKind === "group"
+      || value.channelKind === "room" || value.channelKind === "square")
     && typeof value.contentType === "string" && typeof value.createdAt === "number"
     && (value.text === undefined || typeof value.text === "string");
 }
