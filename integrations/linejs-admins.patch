@@ -1,5 +1,5 @@
 diff --git a/AGENTS.md b/AGENTS.md
-index 59cf16e..f8c1cd9 100644
+index 59cf16e..c906aaa 100644
 --- a/AGENTS.md
 +++ b/AGENTS.md
 @@ -62,14 +62,22 @@ Gate 依 [PLAN.md](PLAN.md) 逐關驗收，不跳關；Gate 0 遠端需存在四
@@ -20,7 +20,7 @@ index 59cf16e..f8c1cd9 100644
  12. 詐騙機率分析（2026-10 小語裁示，`jev.token` 有值才啟用）：金鑰只用於送往 `https://api.typesafe.ai/v1/systemone` 的 Bearer 標頭（拒絕重新導向），不送網頁（網頁只收 `scam:state { enabled }`）、不入日誌與錯誤；`scam:check` 網頁每連線每分鐘 10 次；機器人（2026-10 裁示開放）只限 `api.chats` 內的訊息，所有機器人連線合計每分鐘 10 次，不收 `scam:state`；只送指定的那一則、伺服器已顯示、非本帳號、未收回、非系統訊息的**伺服器快取文字**，不採用用戶端傳來的文字，不送寄件者或聊天室；回應 fail-closed（無 0–1 機率即失敗），失敗對外只回 generic `SCAM_CHECK_FAILED`；結果只送給要求的連線，網頁標示為模型估計、僅供參考。
 +13. OpenChat 管理員查詢（`chat:admins:get`，只限機器人）：僅 `api.chats` 內已知 `square`，所有機器人合計每分鐘 10 次；`hello.capabilities` 宣告 `"chat:admins"`。adapter 以 `getSquareChatMembers` 走完所有 continuationToken，只取 `membershipState: JOINED`（2）的 `ADMIN`（1）／`CO_ADMIN`（2），以 `getSquareChat.squareChatMember.squareMemberMid` 確認自己的身分且須出現在完整名單中。不得使用發言者角色快取或回傳部分結果；缺漏、循環、1000 頁上限或上游失敗回 generic `CHAT_ADMINS_FAILED`；非社群回 `CHAT_ADMINS_UNSUPPORTED`。回應 `chat:admins { requestId, chatId, admins, ownMemberId }` 只給要求者，generation 阻止登出／換帳號舊結果。`scam:check` 未知自己社群身分時也須先取得成員資料，失敗不呼叫付費分析，排除手機與機器人自己的訊息。LINE 無跨頁原子 snapshot，文件須保留此限制與未實帳號驗證聲明。
 +14. 管理員標記：同一機器人連線最後發起且成功完成的 `chat:admins:get` 查證名單，可用 `message:send.mentions` 標記尚未發言者；僅限該聊天室。新查詢開始即撤銷舊名單及尚未完成的舊查詢授權資格，舊成功結果回 `CHAT_ADMINS_FAILED`，不得在新查詢等待中、成功或失敗後恢復授權。登出／換帳號清空全部授權。不得放行任意 ID、跨聊天室或其他連線的名單。網頁仍只允許已知發言者。
-+15. WebSocket 操作與 HTTP 上傳的滑動窗口限流使用單調時鐘 `performance.now()`；不得以系統時間校正提早恢復配額或延長限制。既有配額、窗口長度及每連線／全域共用範圍不變。
++15. WebSocket 操作與 HTTP 上傳的滑動窗口限流使用單調時鐘 `performance.now()`；不得以系統時間校正提早恢復配額或延長限制。既有配額、窗口長度及每連線／全域共用範圍不變。頻道異動的三十秒刷新間隔亦使用單調時間，保留三秒合併；首次異動不得因程序剛啟動而多等，登出取消排程並重設間隔。
 +16. 成員顯示資料查詢、失敗退避與訊息傳遞佇列屬於當前登入工作階段。登出作廢舊佇列，舊查詢不得啟動後續批次或寫入新帳號的重試狀態，新帳號訊息不得等待舊查詢。已送出的外部要求可能仍會完成，但結果不得跨帳號生效。既有五分鐘失敗退避使用單調時間，校時不得提前解除或延長等待；只在後續有需求時重試。同一 OpenChat 成員及 talk 聯絡人批次中重疊的 ID 共用尚未完成的顯示資料查詢；talk 只傳送新 ID，保留每批百人上限，OpenChat 後續批次略過等待期間已取得的資料。各呼叫仍最多等候五秒。完成／失敗回收共用關聯，登出清空，舊結果不得移除新登入的查詢，不影響管理員授權查證。
 +
 +`scam:check` 的本地訊息資格檢查必須先於成員查詢，避免不存在或不可分析的訊息觸發 LINE 請求；未知自己身分的查詢完成後必須重讀並重新驗證訊息，不能分析等待前的舊快照。
@@ -38,10 +38,10 @@ index 59cf16e..f8c1cd9 100644
  
  LINE operation 與連線注意事項：linejs 未記載多數 operation 的參數排列，`SEND_CHAT_CHECKED`（手機已讀）只取 `param1` 且須為伺服器已知聊天室；群組／個人資料／聊天室成員變動不解析參數，只觸發節流的頻道清單重新整理（3 秒合併、最多每 30 秒一次），不得改成依參數猜測內容。頻道清單的最後一則訊息（`Channel.lastMessage`）是預覽，不登記媒體來源，不能藉此下載。WS 心跳：伺服器以協定層 Ping 每 30 秒檢查、兩輪無回應即關閉；網頁 `ping` 需 10 秒內收到 `pong`，回到前景立即探測。斷線記錄（網頁主控台、服務日誌 `WS_CLOSED`）只可含時間、close code、截短的 reason 與前後景狀態，不得含標頭、cookie 或 Token。
 diff --git a/PLAN.md b/PLAN.md
-index 49acd5b..5af6cbf 100644
+index 49acd5b..41ac4cd 100644
 --- a/PLAN.md
 +++ b/PLAN.md
-@@ -144,23 +144,72 @@
+@@ -144,23 +144,74 @@
  
  > 實作補完（協定版本仍為 2）：登出／換帳號以 session generation 作廢歷史、發送、回應、收回、已讀與頻道查詢的舊結果；歷史重新載入也同步清除已取消的回應。OpenChat 歷史採同聊天室 single-flight、時間＋訊息 id 錨點，快取最多 5 個聊天室各 5000 則、10 分鐘，合併即時訊息與狀態，過期時重新取得回應，僅已提供頁面的訊息授權媒體。網頁搜尋維持即時更新並跨聊天室依時間排序；初次歷史失敗可重試，回應更新不重建媒體 DOM，登出清除搜尋、私人畫面與通知。隔離測試與無頭靜音瀏覽器已驗證；尚未對本次變動重新進行真實 LINE Gate 驗收。
  
@@ -85,6 +85,8 @@ index 49acd5b..5af6cbf 100644
 +
 +> HTTP 圖片條件式回應：可快取的 CDN 圖片以內容 ETag 回覆 GET／HEAD 重驗證，保留 cookie、資源存在與錯誤檢查，支援弱比較、清單及萬用值；相符條件優先於 Range，If-Range 僅接受相符強標記。私人附件仍 no-store，不產生 ETag／304。標記以弱參照跟隨快取 Buffer，不阻止 LRU 回收。實際 Provider＋MediaService＋HTTP smoke 驗證六種圖片路徑、內容變更、快取淘汰、HEAD／Range 與私人附件隔離；299 項測試通過，未連接真實 LINE。
 +
++> 頻道異動刷新使用單調時間：保留三秒合併與三十秒間隔，系統時間前跳不再提早呼叫 LINE，回撥不再延後更新。首次異動與新登入只等合併時間，登出取消舊排程。實際 Hub＋WebSocket 配合受控時鐘與排程器，驗證校時前後的呼叫時點、頻道快照、合併邊界與換帳號；303 項測試通過，未連接真實 LINE。
++
  > v1.15（小語裁示：JEV 詐騙分析，協定版本仍為 2）：`config.yaml` 新增選用區段 `jev`（`token`：TypeSafe API 金鑰，有值才啟用；`model`：預設 `jev-1.13.0`）。新增 Server → Client `scam:state`（`{ enabled }`，連線即送、只給網頁，不含金鑰）與 `scam:result`（`{ requestId, chatId, messageId, analysis: { probability, tactic?: { kind, confidence } } }`，只送給要求的連線），Client → Server `scam:check`（`{ requestId, chatId, messageId }`，僅網頁、每連線每分鐘 10 次）。伺服器只接受已顯示、非本帳號、未收回、已解密、非系統訊息的文字訊息，以自己快取的文字經 `src/jev/` 呼叫 `POST https://api.typesafe.ai/v1/systemone`（Noul 題問是否為詐騙、Choice 題問最接近的手法；題目用英文，因官方說明英文準確度最佳），回應 fail-closed；未設定金鑰回 `SCAM_CHECK_UNAVAILABLE`，失敗回 `SCAM_CHECK_FAILED`。網頁對別人的文字訊息右鍵出現「詐騙機率分析」，以官方範例門檻分級（> 0.8 高度疑似、≤ 0.2 不太像、其間無法確定）並註明為模型估計、文字已送至 TypeSafe。尚未以有效金鑰實測真實分析結果。
  
  > v1.16（小語裁示：JEV 開放給機器人 API，協定版本仍為 2；MCP 入口裁示不做）：機器人連線新增 `scam:check`（`{ requestId, chatId, messageId }`），規則同網頁——只接受伺服器已顯示、非本帳號、未收回、已解密、非系統訊息的文字訊息，送伺服器快取的文字——另限 `api.chats` 內的聊天室（其餘 `UNKNOWN_CHAT`），所有機器人連線合計每分鐘 10 次（與網頁各連線的額度分開）；成功回 `scam:result`，未設定金鑰回 `SCAM_CHECK_UNAVAILABLE`。機器人不收 `scam:state`。不接受機器人傳任意文字。
@@ -115,7 +117,7 @@ index 49acd5b..5af6cbf 100644
  | `channels` | `{ channels: Channel[] }`（snapshot，連線即送、變動重送） |
  | `messages` | `{ chatId, messages: Message[] }`（連線時快照，每個聊天室一個影格；舊訊息，不計未讀） |
  | `message` | `{ message: Message }`（即時新訊息） |
-@@ -190,6 +239,7 @@
+@@ -190,6 +241,7 @@
  | `message:react` | `{ requestId, chatId, messageId, reaction: "NICE"｜"LOVE"｜"FUN"｜"AMAZING"｜"SAD"｜"OMG"｜null }`（僅網頁，與 `message:send` 共用頻率上限） |
  | `scam:check` | `{ requestId, chatId, messageId }`（網頁每連線每分鐘 10 次；機器人限 `api.chats`、所有機器人合計每分鐘 10 次；只接受別人傳來、已顯示、未收回的文字訊息） |
  | `profile:get` | `{ requestId }`（自己的 `profile`；網頁與機器人皆可，不呼叫 LINE） |
@@ -123,7 +125,7 @@ index 49acd5b..5af6cbf 100644
  | `channels:refresh` | `{}` |
  | `api:token:create` / `api:token:revoke` | `{}`（產生或撤銷機器人 Token，並中斷所有機器人連線） |
  | `ping` | `{}` |
-@@ -197,7 +247,7 @@
+@@ -197,7 +249,7 @@
  ### 機器人 API（`/api/ws`）
  - 升級條件：`api.enabled`、**無 `Origin`**、`Authorization: Bearer linejs_…` 符合目前 Token；否則 403（同時超過 4 個連線回 429）。`Host` 不限制（同網頁）。
  - 連線時收到 `hello`、`auth:state`、`status`、`auth:ready`、僅含 `api.chats` 的 `channels`；之後只有這些聊天室的 `message`／`message:edit`。不重播、不給 `read`／`update:available`／`api:state`。
@@ -133,7 +135,7 @@ index 49acd5b..5af6cbf 100644
  
  ### HTTP
 diff --git a/README.en.md b/README.en.md
-index 6b97c31..804742b 100644
+index 6b97c31..4585376 100644
 --- a/README.en.md
 +++ b/README.en.md
 @@ -26,7 +26,27 @@ flowchart LR
@@ -165,7 +167,16 @@ index 6b97c31..804742b 100644
  
  ## Requirements
  
-@@ -164,18 +184,25 @@ Lets your own programs (bots) send and receive messages. **Disabled by default**
+@@ -71,6 +91,8 @@ Open `http://127.0.0.1:3789`. If `session.json` can be reused, you enter the cha
+ 
+ The app can be installed as a PWA (the browser's 「安裝」 (Install) action; favicon and manifest included). The service worker caches only public static files, never `/media/*` or `/ws`; pages always use a network-first strategy. The web interface disables the browser's native context menu except in input fields, replacing it with a message menu (you can take back your own messages there; touch long-press works too. Right-clicking a chat in the list shows and copies its channel ID, and right-clicking your own name at the top left shows and copies your own ID); this is a convenience, not a security mechanism. Unread counts in the chat list come from LINE and are cleared after opening a chat and sending a read receipt; reading a chat on another device such as your phone (LINE's `SEND_CHAT_CHECKED`) also clears it at once. When a group is renamed or changes its picture, members join or leave, or a friend changes name or profile picture, the service fetches the channel list from LINE again (once per burst of changes, and at most once every 30 seconds).
+ 
++Channel changes retain the three-second settling delay and thirty-second refresh gap, measured by monotonic elapsed time so wall-clock corrections cannot trigger early queries or postpone updates. The first change waits only for settling; logout cancels pending timers, and the next account does not inherit the previous gap.
++
+ Right-click a chat message (long-press on touch screens) and choose 「顯示寄件者 ID」 to view and copy another person's ID. Bots read `message.senderId` in live `message`/`message:edit` frames, or `messages[].senderId` in `history`, still restricted to `api.chats`. OpenChat returns the OpenChat member ID, not the ordinary LINE account ID; this feature does not look up members who have not appeared in messages.
+ 
+ `session.json` contains credentials and E2EE key material. It must be saved with permissions `600` and must not be shared or committed. `config.yaml` contains personal configuration and is excluded from version control. `api-token.json` (the bot Token's SHA-256 and creation time, permissions `600`) and `linejs.pid` (the running service's PID, used by `stop`/`restart`) are also excluded from version control.
+@@ -164,18 +186,25 @@ Lets your own programs (bots) send and receive messages. **Disabled by default**
  | Bot → Service | `history:fetch` | `{ requestId, chatId, limit?, before? }`: the same pagination as the web interface, without a read-receipt snapshot |
  | Bot → Service | `scam:check` | `{ requestId, chatId, messageId }`: check with Jev a text message **from someone else** in `api.chats` that the service has shown (received live or returned by `history:fetch`); the server sends its own cached text. Requires `jev.token` (otherwise `SCAM_CHECK_UNAVAILABLE`); 10 per minute across all bots, each billed by TypeSafe. Success returns `scam:result { requestId, chatId, messageId, analysis: { probability, tactic? } }` |
  | Bot → Service | `profile:get` | `{ requestId }`: get your own ID and name at any time; returns `profile { requestId, profile: { userId, displayName, pictureId? } }` (the same as `auth:ready`; no LINE request; shares the 10-per-second-per-connection budget with `history:fetch`; returns `INVALID_REQUEST` when not signed in) |
@@ -195,7 +206,7 @@ index 6b97c31..804742b 100644
  
  ```js
 diff --git a/README.ja.md b/README.ja.md
-index a6e80b5..fd0fb2b 100644
+index a6e80b5..6712c68 100644
 --- a/README.ja.md
 +++ b/README.ja.md
 @@ -26,7 +26,27 @@ flowchart LR
@@ -227,7 +238,16 @@ index a6e80b5..fd0fb2b 100644
  
  ## 動作要件
  
-@@ -164,18 +184,25 @@ HTTP：`GET /media/:mediaId`（スタンプ、スタンプパックのアイコ
+@@ -71,6 +91,8 @@ npm start
+ 
+ PWA としてインストールできます（ブラウザーの「安裝」（インストール）。favicon と manifest を含みます）。Service worker は公開の静的ファイルのみキャッシュし、`/media/*` と `/ws` は扱いません。ページは常にネットワーク優先です。Web ページではブラウザー標準の右クリックメニューを無効にし（入力欄を除く）、メッセージメニューを表示します（自分のメッセージの送信取消に対応。タッチの長押しでも同じです。チャットを右クリックするとチャンネル ID を、左上の自分の名前を右クリックすると自分の ID を表示・コピーできます）。これは操作の利便性のためであり、セキュリティ機構ではありません。チャット一覧の未読数は LINE 側の数値を使用し、チャットを開いて既読通知を送った後に消去します。スマートフォンなどほかの端末で読んだ場合（LINE の `SEND_CHAT_CHECKED`）もすぐに消去します。グループ名や画像の変更、メンバーの参加・退出、友だちの名前やプロフィール画像の変更があると、サービスはチャンネル一覧を LINE から取り直します（一連の変更につき 1 回、かつ最大 30 秒に 1 回）。
+ 
++チャンネル変更は従来どおり 3 秒間まとめ、更新間隔の 30 秒は単調時計で測ります。システム時刻の補正で照会が早まったり、更新が遅れたりしません。最初の変更は集約時間だけ待ち、ログアウトで保留タイマーを取り消します。次のアカウントに前の待機間隔は引き継ぎません。
++
+ チャットのメッセージを右クリック（タッチ画面では長押し）して「顯示寄件者 ID」を選ぶと、相手の ID を表示・コピーできます。ボットはリアルタイムの `message`／`message:edit` の `message.senderId`、または `history` の `messages[].senderId` から取得できます。引き続き `api.chats` 内のみが対象です。OpenChat では通常の LINE アカウント ID ではなく、その社群のメンバー ID を返します。メッセージに登場していないメンバーは検索しません。
+ 
+ `session.json` には認証情報と E2EE key material が含まれるため、必ず権限 `600` で保存し、共有・コミットしてはいけません。`config.yaml` は個人設定であり、バージョン管理には含めません。`api-token.json`（ボット Token の SHA-256 と作成時刻、権限 `600`）と `linejs.pid`（実行中のサービスの PID。`stop`／`restart` で使用）もバージョン管理には含めません。
+@@ -164,18 +186,25 @@ HTTP：`GET /media/:mediaId`（スタンプ、スタンプパックのアイコ
  | ボット → サービス | `history:fetch` | `{ requestId, chatId, limit?, before? }`：Web ページと同じページ取得ですが、既読 snapshot は含みません |
  | ボット → サービス | `scam:check` | `{ requestId, chatId, messageId }`：`api.chats` 内の**相手から届いた**、サービスが表示済み（リアルタイム受信または `history:fetch` で取得）のテキストメッセージを Jev で分析します。サーバーは自身のキャッシュのテキストを送ります。`jev.token` の設定が必要で（未設定時は `SCAM_CHECK_UNAVAILABLE`）、全ボット合計で毎分 10 回、1 回ごとに TypeSafe の料金がかかります。成功時は `scam:result { requestId, chatId, messageId, analysis: { probability, tactic? } }` |
  | ボット → サービス | `profile:get` | `{ requestId }`：自分の ID と名前をいつでも取得できます。`profile { requestId, profile: { userId, displayName, pictureId? } }` を返します（`auth:ready` と同じ内容。LINE には問い合わせず、`history:fetch` と接続ごとに毎秒 10 回の枠を共有。未ログイン時は `INVALID_REQUEST`） |
@@ -257,7 +277,7 @@ index a6e80b5..fd0fb2b 100644
  
  ```js
 diff --git a/README.md b/README.md
-index 7704eb9..ef28c5d 100644
+index 7704eb9..cae96fe 100644
 --- a/README.md
 +++ b/README.md
 @@ -26,7 +26,27 @@ flowchart LR
@@ -289,7 +309,16 @@ index 7704eb9..ef28c5d 100644
  
  ## 環境需求
  
-@@ -164,18 +184,25 @@ HTTP：`GET /media/:mediaId`（貼圖、貼圖包圖示、大頭照與原圖、
+@@ -71,6 +91,8 @@ npm start
+ 
+ 可安裝為 PWA（瀏覽器「安裝」；含 favicon 與 manifest）。Service worker 只快取公開靜態檔，不碰 `/media/*` 與 `/ws`；頁面一律網路優先。網頁會鎖定瀏覽器原生右鍵選單（輸入欄位除外），右鍵改為訊息選單（可收回自己的訊息；觸控長按亦同。聊天頻道上右鍵可顯示並複製頻道 ID，左上角自己的名稱上右鍵可顯示並複製自己的 ID），此為操作便利而非安全機制。聊天列表未讀數取自 LINE 端計數，開啟並回報已讀後清除；在手機等其他裝置讀過（LINE 的 `SEND_CHAT_CHECKED`）也會即時清除。群組改名、換圖、成員加入或離開、好友換名字或大頭照時，服務會重新向 LINE 取得頻道清單（同一波變動只取一次，且最多每 30 秒一次）。
+ 
++頻道異動仍先合併三秒，再以單調經過時間維持三十秒刷新間隔；系統校時不會提早重查或延後更新。首次異動只等待合併時間，登出取消待處理排程，下一個帳號不繼承舊間隔。
++
+ 在聊天室訊息上按右鍵（觸控長按），選「顯示寄件者 ID」可查看與複製其他人的 ID。機器人 API 從即時 `message`／`message:edit` 的 `message.senderId`，或 `history` 的 `messages[].senderId` 取得；仍限 `api.chats` 內的聊天室。社群回傳的是社群成員 ID，不是一般 LINE 帳號 ID；此功能不查詢未出現過的成員。
+ 
+ `session.json` 包含憑證與 E2EE key material，必須以權限 `600` 保存，不得分享或提交。`config.yaml` 為個人設定，不入版本控制。`api-token.json`（機器人 Token 的 SHA-256 與建立時間，權限 `600`）與 `linejs.pid`（執行中服務的 PID，供 `stop`／`restart` 使用）同樣不入版本控制。
+@@ -164,18 +186,25 @@ HTTP：`GET /media/:mediaId`（貼圖、貼圖包圖示、大頭照與原圖、
  | 機器人 → 服務 | `history:fetch` | `{ requestId, chatId, limit?, before? }`：與網頁相同的分頁，但不附已讀快照 |
  | 機器人 → 服務 | `scam:check` | `{ requestId, chatId, messageId }`：以 Jev 分析 `api.chats` 內**別人傳來**、服務已顯示（即時收到或 `history:fetch` 取得）的文字訊息；伺服器送自己快取的文字。需設定 `jev.token`（否則 `SCAM_CHECK_UNAVAILABLE`），所有機器人合計每分鐘 10 次，每次依 TypeSafe 計費。成功回 `scam:result { requestId, chatId, messageId, analysis: { probability, tactic? } }` |
  | 機器人 → 服務 | `profile:get` | `{ requestId }`：隨時取得自己的 ID 與名稱，回 `profile { requestId, profile: { userId, displayName, pictureId? } }`（同 `auth:ready`；不呼叫 LINE，與 `history:fetch` 共用每連線每秒 10 次；未登入回 `INVALID_REQUEST`） |
@@ -319,7 +348,7 @@ index 7704eb9..ef28c5d 100644
  
  ```js
 diff --git a/SECURITY.md b/SECURITY.md
-index c3e123e..740e703 100644
+index c3e123e..7cfa7d0 100644
 --- a/SECURITY.md
 +++ b/SECURITY.md
 @@ -116,8 +116,9 @@ approval, and a regression against any of them is treated as a vulnerability.
@@ -329,7 +358,7 @@ index c3e123e..740e703 100644
 -| A strict CSP (`default-src 'none'`, `script-src 'self'`, `frame-ancestors 'none'`, no inline script) and `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store` are sent on every response. The one exception is the public build output under `/assets/` (content-hashed file names, no account data), which is `public, max-age=31536000, immutable`. | `src/http/server.ts` |
 +| A strict CSP (`default-src 'none'`, `script-src 'self'`, `frame-ancestors 'none'`, no inline script), `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer` are sent on every response. Caching defaults to `no-store`; public content-hashed build assets under `/assets/` use `public, max-age=31536000, immutable`, and cookie-protected CDN images use `private, max-age=86400`. | `src/http/server.ts` |
  | There is no HTTP login endpoint. Login runs only over the WebSocket. The CLI (`npm run cli`) is a client of that same WebSocket; it never reads or writes `session.json` itself. | `src/ws/hub.ts`, `src/cli.ts` |
-+| Sliding-window quotas for WebSocket actions and HTTP uploads use monotonic elapsed time. Wall-clock corrections cannot replenish a budget early or prolong exhaustion; configured limits, window lengths and sharing scopes remain unchanged. | `src/limit.ts` |
++| Sliding-window quotas for WebSocket actions and HTTP uploads use monotonic elapsed time. Wall-clock corrections cannot replenish a budget early or prolong exhaustion; configured limits, window lengths and sharing scopes remain unchanged. Channel-change refreshes also use monotonic time for their thirty-second gap, preserving three-second settling and resetting timers and the gap on logout. | `src/limit.ts`, `src/ws/hub.ts` |
  
  ### Bot API (`/api/ws`, off by default)
  
@@ -1035,7 +1064,7 @@ index 9307238..a67a356 100644
  export interface Mention {
    userId: string;
 diff --git a/src/ws/hub.ts b/src/ws/hub.ts
-index 4ae6a53..78db4aa 100644
+index 4ae6a53..baf3875 100644
 --- a/src/ws/hub.ts
 +++ b/src/ws/hub.ts
 @@ -12,7 +12,7 @@ import type { Channel, ChannelKind, Message, Reactions, ReadPosition } from "../
@@ -1064,7 +1093,15 @@ index 4ae6a53..78db4aa 100644
    let status: ListenState = "starting";
    let refreshing: Promise<void> | undefined;
    // State can become ready again before an old LINE request settles; "ready" alone is not an account boundary.
-@@ -110,9 +113,13 @@ export function createHub(options: HubOptions): Hub {
+@@ -103,16 +106,20 @@ export function createHub(options: HubOptions): Hub {
+   let update: UpdateInfo | undefined;
+   let refreshTimer: NodeJS.Timeout | undefined;
+   let listChangeTimer: NodeJS.Timeout | undefined;
+-  let lastListChange = 0;
++  let lastListChange = -Infinity;
+   // Newest message id per chat already reported as read, so each position is sent to LINE once.
+   const markedRead = new Map<string, bigint>();
+   // Latest read position per chat and reader, from LINE snapshots and live events. LINE has no
    // snapshot for 1:1 chats, so without this a page reload would forget who already read.
    const seenReads = new Map<string, Map<string, bigint>>();
    // The latest LINE read-range lookup per chat (see sendReadSnapshot).
@@ -1300,6 +1337,15 @@ index 4ae6a53..78db4aa 100644
    /** Local only (no LINE request): the profile LINE gave at sign-in. */
    function handleProfile(socket: WebSocket, frame: Record<string, unknown>): void {
      const requestId = requestIdOf(frame);
+@@ -535,7 +609,7 @@ export function createHub(options: HubOptions): Hub {
+       // Logged out or failed: nothing from the previous account may stay in memory or on screen.
+       generation += 1;
+       refreshing = undefined;
+-      lastListChange = 0;
++      lastListChange = -Infinity;
+       clearTimeout(refreshTimer);
+       clearTimeout(listChangeTimer);
+       store.clear();
 @@ -544,6 +618,8 @@ export function createHub(options: HubOptions): Hub {
        seenReads.clear();
        readFetches.clear();
@@ -1329,6 +1375,18 @@ index 4ae6a53..78db4aa 100644
          case "profile:get":
            if (!historyLimiter.allow()) fail(socket, "RATE_LIMITED", requestIdOf(frame as Record<string, unknown>));
            else handleProfile(socket, frame as Record<string, unknown>);
+@@ -729,9 +809,9 @@ export function createHub(options: HubOptions): Hub {
+     handleChatsChanged() {
+       if (login.state !== "ready") return;
+       clearTimeout(listChangeTimer);
+-      const wait = Math.max(LIST_CHANGE_SETTLE_MS, lastListChange + LIST_CHANGE_MIN_GAP_MS - Date.now());
++      const wait = Math.max(LIST_CHANGE_SETTLE_MS, lastListChange + LIST_CHANGE_MIN_GAP_MS - performance.now());
+       listChangeTimer = setTimeout(() => {
+-        lastListChange = Date.now();
++        lastListChange = performance.now();
+         void refreshChannels();
+       }, wait);
+     },
 diff --git a/src/ws/protocol.ts b/src/ws/protocol.ts
 index b3745a5..51c3158 100644
 --- a/src/ws/protocol.ts
@@ -1382,7 +1440,7 @@ index 31fd7a2..9518ee1 100644
    const base = header(frame);
    if (!base) return { ok: false, ...(requestIdOf(frame) ? { requestId: requestIdOf(frame)! } : {}) };
 diff --git a/test/hub.test.mjs b/test/hub.test.mjs
-index e3ebc41..86994c5 100644
+index e3ebc41..4df086f 100644
 --- a/test/hub.test.mjs
 +++ b/test/hub.test.mjs
 @@ -5,6 +5,7 @@ import { createServer } from "node:net";
@@ -1648,7 +1706,100 @@ index e3ebc41..86994c5 100644
  test("an open chat is reported read once per position, only for messages the server has shown", async (t) => {
    const env = await signedIn(t);
    env.provider.history = { messages: [older("1001", 10), older("1002", 20), older("1003", 30)], hasMore: false };
-@@ -1571,3 +1806,376 @@ test("a connection that stops answering pings is closed by the next heartbeat; o
+@@ -1121,23 +1356,88 @@ test("group and profile changes refresh the list once per burst, and at most onc
+   const settle = async () => { for (let i = 0; i < 5; i += 1) await Promise.resolve(); };
+   await settle();
+   t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 1_000_000 });
++  let elapsed = 0;
++  t.mock.method(performance, "now", () => elapsed);
++  const tick = (ms) => { elapsed += ms; t.mock.timers.tick(ms); };
+   const atLogin = fetches;
+   for (let i = 0; i < 5; i += 1) hub.handleChatsChanged();
+-  t.mock.timers.tick(2999);
++  tick(2999);
+   await settle();
+   assert.equal(fetches, atLogin, "the burst is still settling");
+-  t.mock.timers.tick(1);
++  tick(1);
+   await settle();
+   assert.equal(fetches, atLogin + 1, "one refresh for the whole burst");
+   hub.handleChatsChanged();
+-  t.mock.timers.tick(10_000);
++  tick(10_000);
+   await settle();
+   assert.equal(fetches, atLogin + 1, "not again so soon");
+-  t.mock.timers.tick(20_000);
++  tick(20_000);
+   await settle();
+   assert.equal(fetches, atLogin + 2, "the next change is picked up once the gap has passed");
+ });
+ 
++test("channel change refresh gaps follow elapsed time despite wall-clock corrections", async (t) => {
++  for (const correction of [60_000, -60_000]) {
++    await t.test(correction > 0 ? "clock moves forward" : "clock moves backward", async (t) => {
++      const { login, hub, provider } = await start(t);
++      let fetches = 0;
++      provider.fetchChannels = async () => { fetches += 1; return provider.channels; };
++      const settle = async () => { for (let i = 0; i < 5; i += 1) await Promise.resolve(); };
++      await login.restore();
++      await settle();
++      let elapsed = 0, wall = 1_000_000;
++      t.mock.timers.enable({ apis: ["setTimeout"] });
++      t.mock.method(performance, "now", () => elapsed);
++      t.mock.method(Date, "now", () => wall);
++      const advance = async (ms) => { elapsed += ms; wall += ms; t.mock.timers.tick(ms); await settle(); };
++      hub.handleChatsChanged();
++      await advance(3000);
++      assert.equal(fetches, 2);
++      await advance(1000);
++      wall += correction;
++      hub.handleChatsChanged();
++      await advance(3000);
++      assert.equal(fetches, 2, "wall time must not permit an early LINE refresh");
++      await advance(25_999);
++      assert.equal(fetches, 2, "the minimum elapsed gap has not passed");
++      await advance(1);
++      assert.equal(fetches, 3, "wall time must not postpone the next eligible refresh");
++    });
++  }
++});
++
++test("logout cancels pending channel refreshes and resets the next account's initial settle delay", async (t) => {
++  const { login, hub, provider } = await start(t);
++  let fetches = 0;
++  provider.fetchChannels = async () => { fetches += 1; return provider.channels; };
++  const settle = async () => { for (let i = 0; i < 5; i += 1) await Promise.resolve(); };
++  await login.restore();
++  await settle();
++  let elapsed = 0;
++  t.mock.timers.enable({ apis: ["setTimeout"] });
++  t.mock.method(performance, "now", () => elapsed);
++  const advance = async (ms) => { elapsed += ms; t.mock.timers.tick(ms); await settle(); };
++  hub.handleChatsChanged();
++  await advance(3000);
++  assert.equal(fetches, 2);
++  hub.handleChatsChanged();
++  await advance(1000);
++  await login.logout();
++  hub.handleChatsChanged();
++  await advance(1000);
++  assert.equal(fetches, 2, "signed-out changes do not fetch channels");
++  await login.restore();
++  await settle();
++  assert.equal(fetches, 3);
++  hub.handleChatsChanged();
++  await advance(2999);
++  assert.equal(fetches, 3);
++  await advance(1);
++  assert.equal(fetches, 4, "the new account only waits for its own settling burst");
++  await advance(30_000);
++  assert.equal(fetches, 4, "the previous account's pending timer was cancelled");
++});
++
+ test("a newer release is announced to every client, including ones that connect later and are not signed in", async (t) => {
+   const { port, cookie, hub } = await start(t, { restore: false });
+   const headers = { Origin: `http://127.0.0.1:${port}`, Cookie: cookie };
+@@ -1571,3 +1871,376 @@ test("a connection that stops answering pings is closed by the next heartbeat; o
    assert.equal(healthy.socket.readyState, WebSocket.OPEN);
    assert.equal(pings, 2);
  });
