@@ -49,6 +49,19 @@ test('bounds and sanitizes hostile display names without breaking surrogate pair
   assert.equal(fallback.text.slice(fallback.mentions[0].start, fallback.mentions[0].end), '@管理員');
 });
 
+test('name truncation preserves normalized spaces and UTF-16 boundaries', () => {
+  for (const [displayName, expected] of [
+    ['a'.repeat(79) + '\t🐱', 'a'.repeat(79) + ' '],
+    ['a'.repeat(79) + '\t\u202e', 'a'.repeat(79)],
+    ['a'.repeat(79) + '🐱b', 'a'.repeat(79)],
+    ['a'.repeat(78) + '🐱b', 'a'.repeat(78) + '🐱'],
+    ['\u00a0A\u200d\t\u3000B\ufeff', 'A B'],
+  ]) {
+    const [alert] = buildAlerts(message, { probability: 0.7 }, [{ ...admin, displayName }]);
+    const mention = alert.mentions[0];
+    assert.equal(alert.text.slice(mention.start, mention.end), '@' + expected);
+  }
+});
 
 test('rejects empty administrators and invalid analysis rather than implying safety', () => {
   assert.throws(() => buildAlerts(message, { probability: 0.7 }, []), /without administrators/);

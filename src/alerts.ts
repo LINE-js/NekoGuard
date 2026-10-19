@@ -16,6 +16,7 @@ const tacticLabels: Readonly<Record<string, string>> = {
 const percentFormat = new Intl.NumberFormat('zh-TW', {
   maximumFractionDigits: 12, useGrouping: false,
 });
+const nameSeparator = /[\s\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2069]/u;
 
 export function buildAlerts(
   message: Pick<Message, 'messageId'>,
@@ -59,13 +60,20 @@ export function buildAlerts(
     const mentions: Mention[] = [];
     for (let index = offset; index < Math.min(offset + 20, unique.length); index++) {
       const admin = unique[index]!;
-      const sanitized = admin.displayName
-        .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/gu, ' ')
-        .replace(/\s+/gu, ' ')
-        .trim();
       let name = '';
-      // Iterate code points so the UTF-16 bound never splits an emoji surrogate pair.
-      for (const character of sanitized) {
+      let space = false;
+      // Delay spaces until another visible character preserves trim-before-truncate.
+      // Stop at the UTF-16 bound without cleaning or copying the unused suffix.
+      for (const character of admin.displayName) {
+        if (name.length === 80) break;
+        if (nameSeparator.test(character)) {
+          space = name.length > 0;
+          continue;
+        }
+        if (space) {
+          name += ' ';
+          space = false;
+        }
         if (name.length + character.length > 80) break;
         name += character;
       }
