@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { WebSocket } from "ws";
 import { record, type Api, type Frame } from "./protocol.js";
@@ -18,6 +17,8 @@ export class ApiError extends Error {
 /** No cookies, Origin, LINE session, or Jev token cross this boundary. */
 export class ApiClient extends EventEmitter implements Api {
   private socket?: WebSocket;
+  // Correlation is socket-local, not authentication. Never reuse IDs after a timeout.
+  private nextRequestId = 0n;
   private pending = new Map<string, {
     responseType: string;
     resolve: (frame: Frame) => void;
@@ -86,7 +87,7 @@ export class ApiClient extends EventEmitter implements Api {
   request(type: string, fields: Record<string, unknown>, responseType: string): Promise<Frame> {
     const socket = this.socket;
     if (!socket || socket.readyState !== WebSocket.OPEN) return Promise.reject(new ApiError("WS_DISCONNECTED"));
-    const requestId = randomUUID();
+    const requestId = (++this.nextRequestId).toString(36);
     const { promise, resolve, reject } = Promise.withResolvers<Frame>();
     const timer = setTimeout(() => {
       this.pending.delete(requestId);
