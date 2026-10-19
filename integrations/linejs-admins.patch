@@ -1,8 +1,8 @@
 diff --git a/AGENTS.md b/AGENTS.md
-index 59cf16e..b3b824e 100644
+index 59cf16e..8794096 100644
 --- a/AGENTS.md
 +++ b/AGENTS.md
-@@ -68,8 +68,12 @@ Gate 依 [PLAN.md](PLAN.md) 逐關驗收，不跳關；Gate 0 遠端需存在四
+@@ -68,8 +68,13 @@ Gate 依 [PLAN.md](PLAN.md) 逐關驗收，不跳關；Gate 0 遠端需存在四
  8. 對外一律 generic 錯誤；內部錯誤只入本地日誌。
  9. 依賴釘選版本；`npm audit` 無 high 以上（Gate 4 驗收）。
  10. 解密／解析失敗 **fail-closed**：顯示佔位，不降級猜測內容。
@@ -13,20 +13,22 @@ index 59cf16e..b3b824e 100644
 +14. 管理員標記：同一機器人連線最後發起且成功完成的 `chat:admins:get` 查證名單，可用 `message:send.mentions` 標記尚未發言者；僅限該聊天室。新查詢開始即撤銷舊名單及尚未完成的舊查詢授權資格，舊成功結果回 `CHAT_ADMINS_FAILED`，不得在新查詢等待中、成功或失敗後恢復授權。登出／換帳號清空全部授權。不得放行任意 ID、跨聊天室或其他連線的名單。網頁仍只允許已知發言者。
 +
 +`scam:check` 的本地訊息資格檢查必須先於成員查詢，避免不存在或不可分析的訊息觸發 LINE 請求；未知自己身分的查詢完成後必須重讀並重新驗證訊息，不能分析等待前的舊快照。
++同一登入工作階段、同一聊天室的並行分析僅共用尚未完成的自己身分查詢；完成／失敗回收，登出清空，舊查詢不能填入或刪除新工作階段的查詢狀態。不共用管理員授權或明確的 `chat:admins:get` 查詢，不自動重試，不合併付費分析或其限額。
  
  內部日誌也不得包含憑證、token、QR URL、PIN 或 key material；不得直接 dump 套件錯誤物件、session 或登入 payload。圖片／貼圖／影片／語音位元組一律走 HTTP，WS 不傳位元組；收到的檔案只以 `file-<id>` 附件下載（`Content-Disposition: attachment`、`application/octet-stream`，不嗅探、不內嵌），規則同收到的媒體。訊息不落盤；每頻道最多 500 則，同 messageId 去重，編輯覆寫快取。LINE listen 失效採退避重啟；QR 失敗不自動循環，須由使用者動作重新產生。
  
 diff --git a/PLAN.md b/PLAN.md
-index 49acd5b..47b0502 100644
+index 49acd5b..18c0053 100644
 --- a/PLAN.md
 +++ b/PLAN.md
-@@ -150,17 +150,22 @@
+@@ -150,17 +150,23 @@
  
  > v1.17（小語裁示：取得個人 ID，協定版本仍為 2）：新增 Client → Server `profile:get`（`{ requestId }`），網頁與機器人連線皆可用，回 `profile`（`{ requestId, profile }`，內容同 `auth:ready` 的 `profile`：`userId`、`displayName`、`pictureId?`），只送給要求的連線；只讀伺服器登入時取得的資料、不呼叫 LINE，未登入或缺 `requestId` 回 `INVALID_REQUEST`，與歷史共用每連線每秒 10 次的額度。機器人不受 `api.chats` 限制（不涉及任何聊天室）。網頁在左上角自己的名稱列右鍵（觸控長按）可顯示並複製自己的 ID。
  
 +> v1.18（NekoGuard companion extension，協定版本仍為 2）：僅機器人新增 `chat:admins:get { requestId, chatId }`，限 `api.chats` 內已知 OpenChat（`square`），所有機器人合計每分鐘 10 次；`hello.capabilities` 含 `"chat:admins"`。只向要求者回 `chat:admins { requestId, chatId, admins: [{ userId, displayName, role: "admin" 或 "coAdmin" }], ownMemberId }`。adapter 每次以 `getSquareChatMembers` 完整分頁、篩選 JOINED 的 ADMIN／CO_ADMIN，自己的成員 id 來自 `getSquareChat.squareChatMember` 且確認在成員名單內，不採用發言者快取。非社群回 `CHAT_ADMINS_UNSUPPORTED`；缺漏、循環、1000 頁上限或上游錯誤回 generic `CHAT_ADMINS_FAILED`，不回部分名單。generation 作廢登出／換帳號舊結果。`scam:check` 亦先解析未知的社群自己身分，排除手機／機器人自己的訊息，失敗不呼叫付費分析。LINE 無跨頁原子 snapshot；尚未真實帳號實測。
 +> 管理員通知授權：同一機器人連線可標記同聊天室最後發起且成功完成的 `chat:admins:get` 回傳的管理員，即使未曾發言。新查詢開始先撤銷舊名單及尚未完成的舊查詢授權資格；舊成功結果回 `CHAT_ADMINS_FAILED`，不能在新查詢等待中、成功或失敗後恢復授權。登出／換帳號清除全部授權，其他目標仍沿用發言者驗證。外掛應在通知前重新取得角色。
 +> 分析請求順序：先以本地快取與已知身分拒絕不可分析訊息，再為其餘 OpenChat 訊息解析未知成員身分；等待後重新讀取並驗證訊息，保留編輯／收回及自身訊息排除。無效要求仍計入原有分析請求限額，不另增重試。
++> 並行分析僅在同一登入工作階段、同一聊天室共用進行中的自己身分解析；完成／失敗釋放、登出清空並丟棄舊結果，不自動重試。每則分析仍分別計費與限流，不授予標記權；明確 `chat:admins:get` 不共用此查詢，維持每次重新查證。
 +
  ### Server → Client
  
@@ -44,7 +46,7 @@ index 49acd5b..47b0502 100644
  | `channels` | `{ channels: Channel[] }`（snapshot，連線即送、變動重送） |
  | `messages` | `{ chatId, messages: Message[] }`（連線時快照，每個聊天室一個影格；舊訊息，不計未讀） |
  | `message` | `{ message: Message }`（即時新訊息） |
-@@ -190,6 +195,7 @@
+@@ -190,6 +196,7 @@
  | `message:react` | `{ requestId, chatId, messageId, reaction: "NICE"｜"LOVE"｜"FUN"｜"AMAZING"｜"SAD"｜"OMG"｜null }`（僅網頁，與 `message:send` 共用頻率上限） |
  | `scam:check` | `{ requestId, chatId, messageId }`（網頁每連線每分鐘 10 次；機器人限 `api.chats`、所有機器人合計每分鐘 10 次；只接受別人傳來、已顯示、未收回的文字訊息） |
  | `profile:get` | `{ requestId }`（自己的 `profile`；網頁與機器人皆可，不呼叫 LINE） |
@@ -52,7 +54,7 @@ index 49acd5b..47b0502 100644
  | `channels:refresh` | `{}` |
  | `api:token:create` / `api:token:revoke` | `{}`（產生或撤銷機器人 Token，並中斷所有機器人連線） |
  | `ping` | `{}` |
-@@ -197,7 +203,7 @@
+@@ -197,7 +204,7 @@
  ### 機器人 API（`/api/ws`）
  - 升級條件：`api.enabled`、**無 `Origin`**、`Authorization: Bearer linejs_…` 符合目前 Token；否則 403（同時超過 4 個連線回 429）。`Host` 不限制（同網頁）。
  - 連線時收到 `hello`、`auth:state`、`status`、`auth:ready`、僅含 `api.chats` 的 `channels`；之後只有這些聊天室的 `message`／`message:edit`。不重播、不給 `read`／`update:available`／`api:state`。
@@ -62,10 +64,10 @@ index 49acd5b..47b0502 100644
  
  ### HTTP
 diff --git a/README.en.md b/README.en.md
-index 6b97c31..f4afb6b 100644
+index 6b97c31..6a604e8 100644
 --- a/README.en.md
 +++ b/README.en.md
-@@ -164,18 +164,22 @@ Lets your own programs (bots) send and receive messages. **Disabled by default**
+@@ -164,18 +164,23 @@ Lets your own programs (bots) send and receive messages. **Disabled by default**
  | Bot → Service | `history:fetch` | `{ requestId, chatId, limit?, before? }`: the same pagination as the web interface, without a read-receipt snapshot |
  | Bot → Service | `scam:check` | `{ requestId, chatId, messageId }`: check with Jev a text message **from someone else** in `api.chats` that the service has shown (received live or returned by `history:fetch`); the server sends its own cached text. Requires `jev.token` (otherwise `SCAM_CHECK_UNAVAILABLE`); 10 per minute across all bots, each billed by TypeSafe. Success returns `scam:result { requestId, chatId, messageId, analysis: { probability, tactic? } }` |
  | Bot → Service | `profile:get` | `{ requestId }`: get your own ID and name at any time; returns `profile { requestId, profile: { userId, displayName, pictureId? } }` (the same as `auth:ready`; no LINE request; shares the 10-per-second-per-connection budget with `history:fetch`; returns `INVALID_REQUEST` when not signed in) |
@@ -86,15 +88,16 @@ index 6b97c31..f4afb6b 100644
  - `scam:check` has its own limit of 10 per minute across all bots (separate from the web pages' budget); exceeding it returns `RATE_LIMITED`.
 +- `chat:admins:get` is limited to 10 per minute across all bots (`RATE_LIMITED`); support is advertised in `hello.capabilities` as `"chat:admins"`. Non-OpenChat returns `CHAT_ADMINS_UNSUPPORTED`; missing metadata, repeated pagination tokens, more than 1000 pages or LINE failure returns generic `CHAT_ADMINS_FAILED`, never a partial list. Logout/account changes discard stale results. LINE offers no atomic cross-page snapshot, so membership changes during a scan can race; real LINE account behavior has not been exercised.
 +- `scam:check` first rejects missing, non-text, unsent, undecryptable, system and known own messages from the local cache, without querying LINE membership for them. For other OpenChat messages, it resolves complete membership if own identity is unknown; failure never calls paid analysis. After waiting, it rereads and validates the current message, still rejecting own phone and bot messages. Actual mentions still use `message:send.mentions` (up to 20, UTF-16 offsets) and `replyTo`.
++- Concurrent analyses in the same login session and OpenChat share only an in-flight own-identity lookup. The slot is released on success or failure without automatic retries; logout invalidates shared state and stale results. Each message still consumes its own analysis quota and is analyzed separately. This shares no administrator grants: explicit `chat:admins:get` requests always perform a fresh lookup.
 +- Admins returned in `chat:admins` may be mentioned even if they have never spoken, but only by the **same bot connection**, in the same chat, after its latest-started lookup succeeds. Starting another lookup immediately revokes the old list and supersedes any lookup still in flight; a superseded success returns `CHAT_ADMINS_FAILED` and cannot restore grants while the newer lookup is pending or after it succeeds or fails. Logout/account changes clear all grants. Arbitrary IDs remain forbidden. Query again before notifying to avoid stale roles.
  - Bots speak through **your personal account**. Frequent or mechanical sending may trigger LINE's risk controls. Set conservative limits and use a secondary account first.
  
  ```js
 diff --git a/README.ja.md b/README.ja.md
-index a6e80b5..7613c6e 100644
+index a6e80b5..7871033 100644
 --- a/README.ja.md
 +++ b/README.ja.md
-@@ -164,18 +164,22 @@ HTTP：`GET /media/:mediaId`（スタンプ、スタンプパックのアイコ
+@@ -164,18 +164,23 @@ HTTP：`GET /media/:mediaId`（スタンプ、スタンプパックのアイコ
  | ボット → サービス | `history:fetch` | `{ requestId, chatId, limit?, before? }`：Web ページと同じページ取得ですが、既読 snapshot は含みません |
  | ボット → サービス | `scam:check` | `{ requestId, chatId, messageId }`：`api.chats` 内の**相手から届いた**、サービスが表示済み（リアルタイム受信または `history:fetch` で取得）のテキストメッセージを Jev で分析します。サーバーは自身のキャッシュのテキストを送ります。`jev.token` の設定が必要で（未設定時は `SCAM_CHECK_UNAVAILABLE`）、全ボット合計で毎分 10 回、1 回ごとに TypeSafe の料金がかかります。成功時は `scam:result { requestId, chatId, messageId, analysis: { probability, tactic? } }` |
  | ボット → サービス | `profile:get` | `{ requestId }`：自分の ID と名前をいつでも取得できます。`profile { requestId, profile: { userId, displayName, pictureId? } }` を返します（`auth:ready` と同じ内容。LINE には問い合わせず、`history:fetch` と接続ごとに毎秒 10 回の枠を共有。未ログイン時は `INVALID_REQUEST`） |
@@ -115,15 +118,16 @@ index a6e80b5..7613c6e 100644
  - `scam:check` には別途、全ボット合計で毎分 10 回の上限があります（Web ページの枠とは別）。超過すると `RATE_LIMITED` を返します。
 +- `chat:admins:get` は全ボット合計で毎分 10 回（超過は `RATE_LIMITED`）。対応時は `hello.capabilities` に `"chat:admins"` を含みます。OpenChat 以外は `CHAT_ADMINS_UNSUPPORTED`。メタデータ不足、ページトークンの循環、1000 ページ超過、LINE の失敗は汎用の `CHAT_ADMINS_FAILED` とし、不完全な一覧は返しません。ログアウトやアカウント変更で古い結果を破棄します。LINE にページ間の原子的 snapshot はなく、走査中のメンバー変更は競合し得ます。実際の LINE アカウントでは未検証です。
 +- `scam:check` はまずローカルキャッシュで、存在しない・非テキスト・送信取消済み・復号失敗・システム・既知の自分のメッセージを拒否し、それらのために LINE のメンバー情報を取得しません。それ以外の OpenChat メッセージで自分の ID が不明なら完全なメンバー情報を取得し、失敗時は有料分析を呼びません。待機後は最新のメッセージを読み直して検証し、スマートフォンやボット自身のメッセージも引き続き拒否します。実際のメンションは `message:send.mentions`（最大 20 人、UTF-16 位置）と `replyTo` を使います。
++- 同じログインセッション・OpenChat の並行分析は、処理中の自分の ID 取得だけを共有します。成功・失敗後に共有枠を解放し、自動再試行はしません。ログアウトで共有状態と古い結果を無効化します。各メッセージは個別に分析制限を消費し、個別に分析します。管理者へのメンション権限は共有せず、明示的な `chat:admins:get` は毎回新しく取得します。
 +- `chat:admins` が返した管理者は未発言でもメンションできますが、**同じボット接続・同じチャット**で最後に開始した取得が成功した場合に限ります。再取得の開始時に古い許可と処理中の以前の取得の権限を直ちに破棄します。以前の取得が後から成功しても `CHAT_ADMINS_FAILED` を返し、新しい取得の待機中・成功後・失敗後のいずれも古い許可を復活させません。ログアウト・アカウント変更で全許可を消去します。任意の ID は許可されません。通知前に再取得してください。
  - ボットは**あなたの個人アカウント**として発言します。頻繁な送信や機械的な送信は LINE の不正利用対策に検知される可能性があります。上限は控えめに設定し、まずサブアカウントを使ってください。
  
  ```js
 diff --git a/README.md b/README.md
-index 7704eb9..af317ca 100644
+index 7704eb9..79f266e 100644
 --- a/README.md
 +++ b/README.md
-@@ -164,18 +164,22 @@ HTTP：`GET /media/:mediaId`（貼圖、貼圖包圖示、大頭照與原圖、
+@@ -164,18 +164,23 @@ HTTP：`GET /media/:mediaId`（貼圖、貼圖包圖示、大頭照與原圖、
  | 機器人 → 服務 | `history:fetch` | `{ requestId, chatId, limit?, before? }`：與網頁相同的分頁，但不附已讀快照 |
  | 機器人 → 服務 | `scam:check` | `{ requestId, chatId, messageId }`：以 Jev 分析 `api.chats` 內**別人傳來**、服務已顯示（即時收到或 `history:fetch` 取得）的文字訊息；伺服器送自己快取的文字。需設定 `jev.token`（否則 `SCAM_CHECK_UNAVAILABLE`），所有機器人合計每分鐘 10 次，每次依 TypeSafe 計費。成功回 `scam:result { requestId, chatId, messageId, analysis: { probability, tactic? } }` |
  | 機器人 → 服務 | `profile:get` | `{ requestId }`：隨時取得自己的 ID 與名稱，回 `profile { requestId, profile: { userId, displayName, pictureId? } }`（同 `auth:ready`；不呼叫 LINE，與 `history:fetch` 共用每連線每秒 10 次；未登入回 `INVALID_REQUEST`） |
@@ -144,12 +148,13 @@ index 7704eb9..af317ca 100644
  - `scam:check` 另有所有機器人合計每分鐘 10 次的上限（與網頁的額度分開），超過回 `RATE_LIMITED`。
 +- `chat:admins:get` 所有機器人合計每分鐘 10 次，超過回 `RATE_LIMITED`；`hello.capabilities` 含 `"chat:admins"` 才支援。非 OpenChat 回 `CHAT_ADMINS_UNSUPPORTED`；資料缺漏、分頁循環、超過 1000 頁或 LINE 失敗回 generic `CHAT_ADMINS_FAILED`，不回不完整名單。登出／換帳號會丟棄舊查詢結果。LINE 不提供跨頁原子快照，掃描期間的成員異動仍可能競態；未對真實 LINE 帳號實測。
 +- `scam:check` 先以本地快取拒絕不存在、非文字、已收回、解密失敗、系統及已知本帳號訊息，不為這些要求查詢 LINE 成員。其餘 OpenChat 訊息若尚無自己的成員身分，先取得完整成員資料，失敗不呼叫付費分析；等待後重新讀取並檢查目前訊息，自己的手機與機器人訊息仍一律拒絕。發送真正標記仍使用 `message:send.mentions`（最多 20 個、UTF-16 位置）與 `replyTo`。
++- 同一登入工作階段、同一 OpenChat 的並行分析共用尚未完成的自己身分查詢，完成或失敗後釋放，不自動重試；登出會作廢共用狀態及舊結果。每則訊息仍分別計入分析限額並執行分析。這不共用管理員授權，明確的 `chat:admins:get` 仍每次重新查詢。
 +- `chat:admins` 回傳的管理員即使尚未發言，也能由**同一條機器人連線**以 `message:send.mentions` 標記；授權限同一聊天室、最後發起且成功完成的查詢。再次查詢會立即撤銷舊名單與尚未完成的舊查詢授權資格；舊查詢即使較晚成功也只回 `CHAT_ADMINS_FAILED`，不能在新查詢等待中、成功或失敗後恢復舊授權。登出／換帳號清除全部授權。不是任意 ID 白名單；通知前應重新查詢，避免使用過時角色。
  - 機器人以**你的真人帳號**發言，頻繁或機械式的發送可能觸發 LINE 風控。請保守設定上限，並先用次要帳號。
  
  ```js
 diff --git a/SECURITY.md b/SECURITY.md
-index c3e123e..9466992 100644
+index c3e123e..a9c06b2 100644
 --- a/SECURITY.md
 +++ b/SECURITY.md
 @@ -127,8 +127,10 @@ approval, and a regression against any of them is treated as a vulnerability.
@@ -164,11 +169,12 @@ index c3e123e..9466992 100644
  
  ### Scam check (TypeSafe Jev, off by default)
  
-@@ -138,6 +140,7 @@ approval, and a regression against any of them is treated as a vulnerability.
+@@ -138,6 +140,8 @@ approval, and a regression against any of them is treated as a vulnerability.
  | The token is used only as the `Authorization: Bearer` header to `https://api.typesafe.ai/v1/systemone`, with redirects refused. It is never sent to the page (pages only learn `scam:state { enabled }`), logged, or included in errors; a failed call logs only `SCAM_CHECK_FAILED` with the HTTP status. | `src/jev/client.ts`, `src/ws/hub.ts` |
  | Only an explicit request sends anything: from a page, `scam:check` is limited to 10 per minute per connection; from a bot, it is limited to the chats in `api.chats` and to 10 per minute across all bot connections together. The server sends **its own cached text** of a message it has shown, from someone other than this account, that was not taken back, decrypted and not a system message; text supplied by the client is ignored, so the endpoint cannot be used to send arbitrary text out. Nothing else (sender, chat, other messages) is sent. | `src/ws/hub.ts`, `src/ws/requests.ts` |
  | The answer is parsed fail-closed: without a probability between 0 and 1 there is no result, and an unknown scam kind is dropped. The result goes only to the connection that asked. | `src/jev/client.ts`, `src/ws/hub.ts` |
 +| OpenChat own-message exclusion uses its own member id, not the talk profile id or only previous service sends. Locally ineligible messages are refused before any membership request. For eligible candidates with unknown own identity, complete membership is resolved before analysis; failure is closed without a paid request. After waiting, the current cached message is reread and validated, including edits, unsends and own identity. This also excludes messages sent from the account's phone before the bot ever sends. | `src/ws/hub.ts`, `src/line/provider.ts` |
++| Concurrent analyses share only in-flight own-identity discovery within the same chat and login session. Success and failure release the slot; logout clears it, and stale completion cannot fill or remove a new session's slot. Each analysis remains separately rate-limited. This never grants mention permission or coalesces explicit `chat:admins:get` requests, which must stay fresh. | `src/ws/hub.ts` |
  
  ### Secrets and credentials
  
@@ -283,7 +289,7 @@ index 9307238..a67a356 100644
  export interface Mention {
    userId: string;
 diff --git a/src/ws/hub.ts b/src/ws/hub.ts
-index 4ae6a53..44d157f 100644
+index 4ae6a53..4dca49c 100644
 --- a/src/ws/hub.ts
 +++ b/src/ws/hub.ts
 @@ -12,7 +12,7 @@ import type { Channel, ChannelKind, Message, Reactions, ReadPosition } from "../
@@ -312,19 +318,21 @@ index 4ae6a53..44d157f 100644
    let status: ListenState = "starting";
    let refreshing: Promise<void> | undefined;
    // State can become ready again before an old LINE request settles; "ready" alone is not an account boundary.
-@@ -111,8 +114,10 @@ export function createHub(options: HubOptions): Hub {
+@@ -111,8 +114,12 @@ export function createHub(options: HubOptions): Hub {
    const seenReads = new Map<string, Map<string, bigint>>();
    // The latest LINE read-range lookup per chat (see sendReadSnapshot).
    const readFetches = new Map<string, { at: number; done: Promise<void> }>();
 -  // OpenChat chat → the member id this account speaks under there, learned from its own sends.
 +  // OpenChat chat → own member identity, learned from fresh membership metadata or own sends.
    const ownSquareSenders = new Map<string, string>();
++  // Share only in-flight own-identity discovery; explicit administrator lookups remain fresh.
++  const ownSquareFetches = new Map<string, Promise<void>>();
 +  // Only the requesting socket may mention quiet admins discovered in its scoped lookup.
 +  let botAdminMentions = new WeakMap<WebSocket, Map<string, ReadonlySet<string>>>();
    // Sockets that answered the last ping (browsers and the ws client both reply to pings on their own).
    const alive = new WeakSet<WebSocket>();
    const timedOut = new WeakSet<WebSocket>();
-@@ -296,10 +301,11 @@ export function createHub(options: HubOptions): Hub {
+@@ -296,10 +303,11 @@ export function createHub(options: HubOptions): Hub {
      if (scope && request.kind !== "text") return fail(socket, "INVALID_REQUEST", request.requestId);
      const target = { channelId: request.chatId, kind: channel.kind };
      if (request.kind === "text") {
@@ -338,7 +346,7 @@ index 4ae6a53..44d157f 100644
            return fail(socket, "INVALID_REQUEST", request.requestId);
          }
        }
-@@ -377,6 +383,11 @@ export function createHub(options: HubOptions): Hub {
+@@ -377,6 +385,11 @@ export function createHub(options: HubOptions): Hub {
      }
    }
  
@@ -350,7 +358,7 @@ index 4ae6a53..44d157f 100644
    /**
     * The text sent to TypeSafe is the server's own copy of a message it has shown, from someone else:
     * a client cannot use this to send arbitrary text out, or to rate its own messages. Bots are also
-@@ -387,12 +398,22 @@ export function createHub(options: HubOptions): Hub {
+@@ -387,12 +400,32 @@ export function createHub(options: HubOptions): Hub {
      if (!parsed.ok) return fail(socket, "INVALID_REQUEST", parsed.requestId);
      const { requestId, chatId, messageId } = parsed.value;
      if (!scam) return fail(socket, "SCAM_CHECK_UNAVAILABLE", requestId);
@@ -367,9 +375,19 @@ index 4ae6a53..44d157f 100644
 +      // Phone sends use the account's OpenChat member mid, not its talk profile mid.
 +      // Resolve it before any paid analysis, even if this service has never sent a message.
 +      if (channel.kind === "square" && !ownSquareSenders.has(chatId)) {
-+        const identity = await provider.fetchChatAdmins({ channelId: chatId, kind: channel.kind });
++        let fetching = ownSquareFetches.get(chatId);
++        if (!fetching) {
++          fetching = provider.fetchChatAdmins({ channelId: chatId, kind: channel.kind })
++            .then((identity) => {
++              if (account === generation && login.state === "ready") ownSquareSenders.set(chatId, identity.ownMemberId);
++            })
++            .finally(() => {
++              if (ownSquareFetches.get(chatId) === fetching) ownSquareFetches.delete(chatId);
++            });
++          ownSquareFetches.set(chatId, fetching);
++        }
++        await fetching;
 +        if (account !== generation || login.state !== "ready") return;
-+        ownSquareSenders.set(chatId, identity.ownMemberId);
 +        // Membership I/O may outlive an edit or unsend; validate the current cached message again.
 +        message = store.get(messageId, chatId);
 +        if (!isScamCandidate(message)) return fail(socket, "INVALID_REQUEST", requestId);
@@ -377,7 +395,7 @@ index 4ae6a53..44d157f 100644
        const analysis = await scam.analyzeScam(message.text);
        if (account !== generation || login.state !== "ready") return;
        send(socket, { type: "scam:result", requestId, chatId, messageId, analysis });
-@@ -490,6 +511,33 @@ export function createHub(options: HubOptions): Hub {
+@@ -490,6 +523,33 @@ export function createHub(options: HubOptions): Hub {
      }
    }
  
@@ -411,15 +429,16 @@ index 4ae6a53..44d157f 100644
    /** Local only (no LINE request): the profile LINE gave at sign-in. */
    function handleProfile(socket: WebSocket, frame: Record<string, unknown>): void {
      const requestId = requestIdOf(frame);
-@@ -544,6 +592,7 @@ export function createHub(options: HubOptions): Hub {
+@@ -544,6 +604,8 @@ export function createHub(options: HubOptions): Hub {
        seenReads.clear();
        readFetches.clear();
        ownSquareSenders.clear();
++      ownSquareFetches.clear();
 +      botAdminMentions = new WeakMap();
        status = "starting";
      }
      broadcastAll({ type: "auth:state", state });
-@@ -579,7 +628,7 @@ export function createHub(options: HubOptions): Hub {
+@@ -579,7 +641,7 @@ export function createHub(options: HubOptions): Hub {
      watch(socket, "bot");
      const sendLimiter = new SlidingWindowLimiter(config.limits.sendsPerSecond, 1000);
      const historyLimiter = new SlidingWindowLimiter(HISTORY_PER_SECOND, 1000);
@@ -428,7 +447,7 @@ index 4ae6a53..44d157f 100644
      send(socket, { type: "auth:state", state: login.state });
      send(socket, { type: "status", state: status });
      if (login.state === "ready") {
-@@ -607,6 +656,10 @@ export function createHub(options: HubOptions): Hub {
+@@ -607,6 +669,10 @@ export function createHub(options: HubOptions): Hub {
            if (!botScamLimiter.allow()) fail(socket, "RATE_LIMITED", requestIdOf(frame as Record<string, unknown>));
            else void handleScamCheck(socket, frame as Record<string, unknown>, botScope);
            return;
@@ -492,7 +511,7 @@ index 31fd7a2..9518ee1 100644
    const base = header(frame);
    if (!base) return { ok: false, ...(requestIdOf(frame) ? { requestId: requestIdOf(frame)! } : {}) };
 diff --git a/test/hub.test.mjs b/test/hub.test.mjs
-index e3ebc41..d73fd77 100644
+index e3ebc41..ee864ae 100644
 --- a/test/hub.test.mjs
 +++ b/test/hub.test.mjs
 @@ -5,6 +5,7 @@ import { createServer } from "node:net";
@@ -503,7 +522,7 @@ index e3ebc41..d73fd77 100644
  import { createWebServer } from "../dist/http/server.js";
  import { createHub } from "../dist/ws/hub.js";
  import { ApiTokenStore } from "../dist/http/apiToken.js";
-@@ -1571,3 +1572,242 @@ test("a connection that stops answering pings is closed by the next heartbeat; o
+@@ -1571,3 +1572,364 @@ test("a connection that stops answering pings is closed by the next heartbeat; o
    assert.equal(healthy.socket.readyState, WebSocket.OPEN);
    assert.equal(pings, 2);
  });
@@ -743,6 +762,128 @@ index e3ebc41..d73fd77 100644
 +      const response = await bot.until((frame) => frame.requestId === "pending");
 +      assert.equal(response.code ?? response.type, mutation === "edit" ? "scam:result" : "INVALID_REQUEST");
 +      assert.deepEqual(rated, mutation === "edit" ? ["updated"] : []);
++    });
++  }
++});
++
++test("concurrent analyses share identity discovery per chat, but not administrator grants", { timeout: 5000 }, async (t) => {
++  const rated = [];
++  const env = await adminEnv(t, { async analyzeScam(text) { rated.push(text); return { probability: 0.9 }; } });
++  const first = await env.open();
++  const second = await env.open();
++  const gate = Promise.withResolvers();
++  const started = Promise.withResolvers();
++  const otherStarted = Promise.withResolvers();
++  const calls = new Map();
++  t.after(() => gate.resolve());
++  env.provider.fetchChatAdmins = async ({ channelId }) => {
++    calls.set(channelId, (calls.get(channelId) ?? 0) + 1);
++    (channelId === ADMIN_CHAT ? started : otherStarted).resolve();
++    await gate.promise;
++    return { admins: [{ ...adminResult.admins[0], userId: `p${"2".repeat(32)}` }], ownMemberId: channelId === ADMIN_CHAT ? OWN_SQUARE_MEMBER : `p${"3".repeat(32)}` };
++  };
++  const request = (client, messageId, channelId, senderId) => {
++    env.hub.handleMessage({ messageId, channelId, channelKind: "square", senderId, senderName: "成員", text: messageId, contentType: "NONE", createdAt: 1 }, "new");
++    client.socket.send(JSON.stringify({ type: "scam:check", requestId: messageId, chatId: channelId, messageId }));
++  };
++  request(first, "201", ADMIN_CHAT, adminResult.admins[0].userId);
++  await started.promise;
++  request(second, "202", ADMIN_CHAT, adminResult.admins[0].userId);
++  second.socket.send(JSON.stringify({ type: "ping" }));
++  await second.until((frame) => frame.type === "pong");
++  assert.equal(calls.get(ADMIN_CHAT), 1);
++  request(env.page, "203", ADMIN_OTHER, OWN_SQUARE_MEMBER);
++  await otherStarted.promise;
++  first.socket.send(JSON.stringify({ type: "chat:admins:get", requestId: "explicit", chatId: ADMIN_CHAT }));
++  first.socket.send(JSON.stringify({ type: "ping" }));
++  await first.until((frame) => frame.type === "pong");
++  assert.deepEqual([...calls], [[ADMIN_CHAT, 2], [ADMIN_OTHER, 1]]);
++  assert.deepEqual(rated, []);
++  gate.resolve();
++  for (const [client, requestId] of [[first, "201"], [second, "202"], [env.page, "203"]]) {
++    assert.equal((await client.until((frame) => frame.requestId === requestId)).type, "scam:result");
++  }
++  assert.equal((await first.until((frame) => frame.requestId === "explicit")).type, "chat:admins");
++  assert.deepEqual(rated.sort(), ["201", "202", "203"]);
++  second.socket.send(JSON.stringify({ type: "message:send", requestId: "no-grant", chatId: ADMIN_CHAT, text: "@管理員", mentions: [{ userId: `p${"2".repeat(32)}`, start: 0, end: 4 }] }));
++  assert.equal((await second.until((frame) => frame.requestId === "no-grant")).code, "INVALID_REQUEST");
++});
++
++test("failed shared identity discovery releases its slot without analysis or automatic retry", { timeout: 5000 }, async (t) => {
++  const rated = [];
++  const env = await adminEnv(t, { async analyzeScam(text) { rated.push(text); return { probability: 0.9 }; } });
++  const bot = await env.open();
++  const gate = Promise.withResolvers();
++  let calls = 0;
++  t.after(() => gate.resolve());
++  env.provider.fetchChatAdmins = async () => { calls += 1; await gate.promise; return adminResult; };
++  env.hub.handleMessage({ messageId: "204", channelId: ADMIN_CHAT, channelKind: "square", senderId: adminResult.admins[0].userId, senderName: "成員", text: "retry", contentType: "NONE", createdAt: 1 }, "new");
++  for (const requestId of ["first", "second"]) bot.socket.send(JSON.stringify({ type: "scam:check", requestId, chatId: ADMIN_CHAT, messageId: "204" }));
++  bot.socket.send(JSON.stringify({ type: "ping" }));
++  await bot.until((frame) => frame.type === "pong");
++  assert.equal(calls, 1);
++  gate.reject(new Error("membership unavailable"));
++  for (const requestId of ["first", "second"]) {
++    assert.equal((await bot.until((frame) => frame.requestId === requestId)).code, "SCAM_CHECK_FAILED");
++  }
++  assert.equal(calls, 1);
++  assert.deepEqual(rated, []);
++  env.provider.fetchChatAdmins = async () => { calls += 1; return adminResult; };
++  bot.socket.send(JSON.stringify({ type: "scam:check", requestId: "retry", chatId: ADMIN_CHAT, messageId: "204" }));
++  assert.equal((await bot.until((frame) => frame.requestId === "retry")).type, "scam:result");
++  assert.equal(calls, 2);
++  assert.deepEqual(rated, ["retry"]);
++});
++
++test("old account identity completion cannot fill or remove the new account's shared lookup", { timeout: 10000 }, async (t) => {
++  for (const rejects of [false, true]) {
++    await t.test(rejects ? "old failure" : "old success", async (t) => {
++      const rated = [];
++      const env = await adminEnv(t, { async analyzeScam(text) { rated.push(text); return { probability: 0.9 }; } });
++      const oldBot = await env.open();
++      const started = Promise.withResolvers();
++      const gates = [Promise.withResolvers(), Promise.withResolvers()];
++      const newOwnMember = `p${"3".repeat(32)}`;
++      let calls = 0;
++      let nextMessageId = 205;
++      t.after(() => { for (const gate of gates) gate.resolve(); });
++      env.provider.fetchChatAdmins = async () => {
++        const index = calls++;
++        started.resolve();
++        await gates[index].promise;
++        return { ...adminResult, ownMemberId: index === 0 ? OWN_SQUARE_MEMBER : newOwnMember };
++      };
++      const request = (client, requestId, senderId) => {
++        const messageId = String(nextMessageId++);
++        env.hub.handleMessage({ messageId, channelId: ADMIN_CHAT, channelKind: "square", senderId, senderName: "成員", text: requestId, contentType: "NONE", createdAt: 1 }, "new");
++        client.socket.send(JSON.stringify({ type: "scam:check", requestId, chatId: ADMIN_CHAT, messageId }));
++      };
++      request(oldBot, "old", adminResult.admins[0].userId);
++      await started.promise;
++      await env.login.logout();
++      await env.login.restore();
++      const current = await env.open();
++      request(current, "new-phone", newOwnMember);
++      current.socket.send(JSON.stringify({ type: "ping" }));
++      await current.until((frame) => frame.type === "pong");
++      assert.equal(calls, 2);
++      if (rejects) gates[0].reject(new Error("old lookup failed"));
++      else gates[0].resolve();
++      await new Promise((resolve) => setImmediate(resolve));
++      const follower = await env.open();
++      request(follower, "new-phone-again", newOwnMember);
++      follower.socket.send(JSON.stringify({ type: "ping" }));
++      await follower.until((frame) => frame.type === "pong");
++      assert.equal(calls, 2);
++      assert.deepEqual(rated, []);
++      gates[1].resolve();
++      assert.equal((await current.until((frame) => frame.requestId === "new-phone")).code, "INVALID_REQUEST");
++      assert.equal((await follower.until((frame) => frame.requestId === "new-phone-again")).code, "INVALID_REQUEST");
++      assert.equal(oldBot.frames.some((frame) => frame.requestId === "old"), false);
++      request(current, "current-valid", adminResult.admins[0].userId);
++      assert.equal((await current.until((frame) => frame.requestId === "current-valid")).type, "scam:result");
++      assert.equal(calls, 2);
++      assert.deepEqual(rated, ["current-valid"]);
 +    });
 +  }
 +});
