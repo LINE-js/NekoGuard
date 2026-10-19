@@ -1,5 +1,5 @@
 diff --git a/AGENTS.md b/AGENTS.md
-index 59cf16e..700f559 100644
+index 59cf16e..c47464e 100644
 --- a/AGENTS.md
 +++ b/AGENTS.md
 @@ -68,8 +68,15 @@ Gate 依 [PLAN.md](PLAN.md) 逐關驗收，不跳關；Gate 0 遠端需存在四
@@ -12,7 +12,7 @@ index 59cf16e..700f559 100644
 +13. OpenChat 管理員查詢（`chat:admins:get`，只限機器人）：僅 `api.chats` 內已知 `square`，所有機器人合計每分鐘 10 次；`hello.capabilities` 宣告 `"chat:admins"`。adapter 以 `getSquareChatMembers` 走完所有 continuationToken，只取 `membershipState: JOINED`（2）的 `ADMIN`（1）／`CO_ADMIN`（2），以 `getSquareChat.squareChatMember.squareMemberMid` 確認自己的身分且須出現在完整名單中。不得使用發言者角色快取或回傳部分結果；缺漏、循環、1000 頁上限或上游失敗回 generic `CHAT_ADMINS_FAILED`；非社群回 `CHAT_ADMINS_UNSUPPORTED`。回應 `chat:admins { requestId, chatId, admins, ownMemberId }` 只給要求者，generation 阻止登出／換帳號舊結果。`scam:check` 未知自己社群身分時也須先取得成員資料，失敗不呼叫付費分析，排除手機與機器人自己的訊息。LINE 無跨頁原子 snapshot，文件須保留此限制與未實帳號驗證聲明。
 +14. 管理員標記：同一機器人連線最後發起且成功完成的 `chat:admins:get` 查證名單，可用 `message:send.mentions` 標記尚未發言者；僅限該聊天室。新查詢開始即撤銷舊名單及尚未完成的舊查詢授權資格，舊成功結果回 `CHAT_ADMINS_FAILED`，不得在新查詢等待中、成功或失敗後恢復授權。登出／換帳號清空全部授權。不得放行任意 ID、跨聊天室或其他連線的名單。網頁仍只允許已知發言者。
 +15. WebSocket 操作與 HTTP 上傳的滑動窗口限流使用單調時鐘 `performance.now()`；不得以系統時間校正提早恢復配額或延長限制。既有配額、窗口長度及每連線／全域共用範圍不變。
-+16. 成員顯示資料查詢、失敗退避與訊息傳遞佇列屬於當前登入工作階段。登出作廢舊佇列，舊查詢不得啟動後續批次或寫入新帳號的重試狀態，新帳號訊息不得等待舊查詢。已送出的外部要求可能仍會完成，但結果不得跨帳號生效。
++16. 成員顯示資料查詢、失敗退避與訊息傳遞佇列屬於當前登入工作階段。登出作廢舊佇列，舊查詢不得啟動後續批次或寫入新帳號的重試狀態，新帳號訊息不得等待舊查詢。已送出的外部要求可能仍會完成，但結果不得跨帳號生效。既有五分鐘失敗退避使用單調時間，校時不得提前解除或延長等待；只在後續有需求時重試。
 +
 +`scam:check` 的本地訊息資格檢查必須先於成員查詢，避免不存在或不可分析的訊息觸發 LINE 請求；未知自己身分的查詢完成後必須重讀並重新驗證訊息，不能分析等待前的舊快照。
 +同一登入工作階段、同一聊天室的並行分析僅共用尚未完成的自己身分查詢；完成／失敗回收，登出清空，舊查詢不能填入或刪除新工作階段的查詢狀態。不共用管理員授權或明確的 `chat:admins:get` 查詢，不自動重試，不合併付費分析或其限額。
@@ -20,10 +20,10 @@ index 59cf16e..700f559 100644
  內部日誌也不得包含憑證、token、QR URL、PIN 或 key material；不得直接 dump 套件錯誤物件、session 或登入 payload。圖片／貼圖／影片／語音位元組一律走 HTTP，WS 不傳位元組；收到的檔案只以 `file-<id>` 附件下載（`Content-Disposition: attachment`、`application/octet-stream`，不嗅探、不內嵌），規則同收到的媒體。訊息不落盤；每頻道最多 500 則，同 messageId 去重，編輯覆寫快取。LINE listen 失效採退避重啟；QR 失敗不自動循環，須由使用者動作重新產生。
  
 diff --git a/PLAN.md b/PLAN.md
-index 49acd5b..44a7bd3 100644
+index 49acd5b..690a1d7 100644
 --- a/PLAN.md
 +++ b/PLAN.md
-@@ -144,23 +144,40 @@
+@@ -144,23 +144,42 @@
  
  > 實作補完（協定版本仍為 2）：登出／換帳號以 session generation 作廢歷史、發送、回應、收回、已讀與頻道查詢的舊結果；歷史重新載入也同步清除已取消的回應。OpenChat 歷史採同聊天室 single-flight、時間＋訊息 id 錨點，快取最多 5 個聊天室各 5000 則、10 分鐘，合併即時訊息與狀態，過期時重新取得回應，僅已提供頁面的訊息授權媒體。網頁搜尋維持即時更新並跨聊天室依時間排序；初次歷史失敗可重試，回應更新不重建媒體 DOM，登出清除搜尋、私人畫面與通知。隔離測試與無頭靜音瀏覽器已驗證；尚未對本次變動重新進行真實 LINE Gate 驗收。
  
@@ -34,6 +34,8 @@ index 49acd5b..44a7bd3 100644
 +> 歷史快取計時：10 分鐘有效期改以單調時鐘計算，仍從載入完成起算；系統時鐘快轉不觸發多餘 LINE 查詢，倒退也不延長過期資料的壽命。實際 Provider＋WebSocket fixture 驗證校時前後的查詢次數與回應狀態更新，回歸測試覆蓋到期前及精確到期；235 項測試通過，未連接真實 LINE。
 +
 +> 成員查詢生命週期：開始查詢、完成等待與啟動下一批 OpenChat 查詢前確認帳號仍有效；登出清除傳遞佇列連結，避免新帳號等待舊要求或繼承其失敗退避。實際 Provider＋WebSocket fixture 驗證舊查詢先完成／新訊息先送達兩種順序，並驗證失效歷史不再啟動後續成員批次；239 項測試通過。已送出的外部要求不宣稱取消，僅丟棄過期結果；未使用真實 LINE 帳號。
++
++> 成員查詢退避計時：既有五分鐘期限與過期失敗紀錄清理改用單調時鐘，不調整查詢 timeout，也不新增背景重試。實際 Provider＋WebSocket fixture 驗證校時不提前重查、到期前仍退避、到期後的新訊息恢復名稱查詢，失敗期間所有訊息仍完整送達；240 項測試通過，未使用真實 LINE。
 +
  > v1.15（小語裁示：JEV 詐騙分析，協定版本仍為 2）：`config.yaml` 新增選用區段 `jev`（`token`：TypeSafe API 金鑰，有值才啟用；`model`：預設 `jev-1.13.0`）。新增 Server → Client `scam:state`（`{ enabled }`，連線即送、只給網頁，不含金鑰）與 `scam:result`（`{ requestId, chatId, messageId, analysis: { probability, tactic?: { kind, confidence } } }`，只送給要求的連線），Client → Server `scam:check`（`{ requestId, chatId, messageId }`，僅網頁、每連線每分鐘 10 次）。伺服器只接受已顯示、非本帳號、未收回、已解密、非系統訊息的文字訊息，以自己快取的文字經 `src/jev/` 呼叫 `POST https://api.typesafe.ai/v1/systemone`（Noul 題問是否為詐騙、Choice 題問最接近的手法；題目用英文，因官方說明英文準確度最佳），回應 fail-closed；未設定金鑰回 `SCAM_CHECK_UNAVAILABLE`，失敗回 `SCAM_CHECK_FAILED`。網頁對別人的文字訊息右鍵出現「詐騙機率分析」，以官方範例門檻分級（> 0.8 高度疑似、≤ 0.2 不太像、其間無法確定）並註明為模型估計、文字已送至 TypeSafe。尚未以有效金鑰實測真實分析結果。
  
@@ -65,7 +67,7 @@ index 49acd5b..44a7bd3 100644
  | `channels` | `{ channels: Channel[] }`（snapshot，連線即送、變動重送） |
  | `messages` | `{ chatId, messages: Message[] }`（連線時快照，每個聊天室一個影格；舊訊息，不計未讀） |
  | `message` | `{ message: Message }`（即時新訊息） |
-@@ -190,6 +207,7 @@
+@@ -190,6 +209,7 @@
  | `message:react` | `{ requestId, chatId, messageId, reaction: "NICE"｜"LOVE"｜"FUN"｜"AMAZING"｜"SAD"｜"OMG"｜null }`（僅網頁，與 `message:send` 共用頻率上限） |
  | `scam:check` | `{ requestId, chatId, messageId }`（網頁每連線每分鐘 10 次；機器人限 `api.chats`、所有機器人合計每分鐘 10 次；只接受別人傳來、已顯示、未收回的文字訊息） |
  | `profile:get` | `{ requestId }`（自己的 `profile`；網頁與機器人皆可，不呼叫 LINE） |
@@ -73,7 +75,7 @@ index 49acd5b..44a7bd3 100644
  | `channels:refresh` | `{}` |
  | `api:token:create` / `api:token:revoke` | `{}`（產生或撤銷機器人 Token，並中斷所有機器人連線） |
  | `ping` | `{}` |
-@@ -197,7 +215,7 @@
+@@ -197,7 +217,7 @@
  ### 機器人 API（`/api/ws`）
  - 升級條件：`api.enabled`、**無 `Origin`**、`Authorization: Bearer linejs_…` 符合目前 Token；否則 403（同時超過 4 個連線回 429）。`Host` 不限制（同網頁）。
  - 連線時收到 `hello`、`auth:state`、`status`、`auth:ready`、僅含 `api.chats` 的 `channels`；之後只有這些聊天室的 `message`／`message:edit`。不重播、不給 `read`／`update:available`／`api:state`。
@@ -83,7 +85,7 @@ index 49acd5b..44a7bd3 100644
  
  ### HTTP
 diff --git a/README.en.md b/README.en.md
-index 6b97c31..86073f3 100644
+index 6b97c31..a75a38a 100644
 --- a/README.en.md
 +++ b/README.en.md
 @@ -26,7 +26,11 @@ flowchart LR
@@ -95,7 +97,7 @@ index 6b97c31..86073f3 100644
 +
 +Cached history uses binary search to locate cursor boundaries instead of scanning the entire message list. An anchor no longer present in the retained window still selects older messages using the same time/id boundary.
 +
-+Member-name lookups and message delivery queues are scoped to one login session. Obsolete work starts no further lookups after logout; new-account messages do not wait for old requests or inherit their retry cooldowns. Already-issued external requests may still complete, but cannot update the next account's state.
++Member-name lookups and message delivery queues are scoped to one login session. Obsolete work starts no further lookups after logout; new-account messages do not wait for old requests or inherit their retry cooldowns. Already-issued external requests may still complete, but cannot update the next account's state. Failed lookups wait five minutes of monotonic elapsed time before a later request can retry; wall-clock corrections do not alter this delay.
  
  ## Requirements
  
@@ -129,7 +131,7 @@ index 6b97c31..86073f3 100644
  
  ```js
 diff --git a/README.ja.md b/README.ja.md
-index a6e80b5..02b5a72 100644
+index a6e80b5..aedb5d0 100644
 --- a/README.ja.md
 +++ b/README.ja.md
 @@ -26,7 +26,11 @@ flowchart LR
@@ -141,7 +143,7 @@ index a6e80b5..02b5a72 100644
 +
 +キャッシュ済み履歴のカーソル境界は、メッセージ全体の線形走査ではなく二分探索で特定します。基準のメッセージが保持範囲から外れていても、同じ時刻／id の境界で古いページを取得します。
 +
-+メンバー表示情報の取得とメッセージ配信キューはログインセッション単位です。ログアウト後の古い処理は後続の照会を開始せず、新アカウントのメッセージは古いリクエストやその再試行待機の影響を受けません。送信済みの外部リクエストは完了する場合がありますが、新アカウントの状態は更新できません。
++メンバー表示情報の取得とメッセージ配信キューはログインセッション単位です。ログアウト後の古い処理は後続の照会を開始せず、新アカウントのメッセージは古いリクエストやその再試行待機の影響を受けません。送信済みの外部リクエストは完了する場合がありますが、新アカウントの状態は更新できません。失敗時の再試行待機は単調時計で 5 分間とし、後続の要求がある場合のみ再試行します。システム時刻の補正で待機時間は変わりません。
  
  ## 動作要件
  
@@ -175,7 +177,7 @@ index a6e80b5..02b5a72 100644
  
  ```js
 diff --git a/README.md b/README.md
-index 7704eb9..7df7910 100644
+index 7704eb9..478e8de 100644
 --- a/README.md
 +++ b/README.md
 @@ -26,7 +26,11 @@ flowchart LR
@@ -187,7 +189,7 @@ index 7704eb9..7df7910 100644
 +
 +快取歷史的游標邊界以二分查找定位，不逐筆掃描整份訊息清單；即使錨點已不在保留視窗內，仍依相同的時間／id 邊界取得較舊頁面。
 +
-+成員顯示資料查詢與訊息傳遞佇列限於同一登入工作階段。登出後的舊工作不再啟動後續查詢，換帳號後的新訊息不等待舊要求，也不受其重試退避影響；已送出的外部要求可能仍會完成，但不能更新新帳號狀態。
++成員顯示資料查詢與訊息傳遞佇列限於同一登入工作階段。登出後的舊工作不再啟動後續查詢，換帳號後的新訊息不等待舊要求，也不受其重試退避影響；已送出的外部要求可能仍會完成，但不能更新新帳號狀態。失敗查詢維持五分鐘退避，以單調時間計算，不受系統校時影響，且只在後續有需求時重試。
  
  ## 環境需求
  
@@ -221,7 +223,7 @@ index 7704eb9..7df7910 100644
  
  ```js
 diff --git a/SECURITY.md b/SECURITY.md
-index c3e123e..63cffe0 100644
+index c3e123e..e327d9e 100644
 --- a/SECURITY.md
 +++ b/SECURITY.md
 @@ -118,6 +118,7 @@ approval, and a regression against any of them is treated as a vulnerability.
@@ -257,7 +259,7 @@ index c3e123e..63cffe0 100644
  | `session.json` and `config.yaml` are git-ignored. The process runs with `umask 077`. | `.gitignore`, `src/main.ts` |
  | Logs never contain credentials, tokens, QR URLs, PINs, key material, or package error objects. Internal errors are logged as short codes locally; clients only ever receive a generic message. | `src/ws/hub.ts`, project rule |
  | On logout or auth failure, the message cache, media cache and read state are cleared from memory. | `src/ws/hub.ts` |
-+| Member-name lookups, retry cooldowns and delivery queues belong to the current account. Logout invalidates queued work; obsolete lookups cannot start further batches or set the next account's cooldowns, and new-account messages do not wait for old lookups. Already-issued external requests may still complete, but their results cannot cross the account boundary. | `src/line/provider.ts` |
++| Member-name lookups, retry cooldowns and delivery queues belong to the current account. Logout invalidates queued work; obsolete lookups cannot start further batches or set the next account's cooldowns, and new-account messages do not wait for old lookups. Already-issued external requests may still complete, but their results cannot cross the account boundary. The existing five-minute retry cooldown uses monotonic elapsed time, unaffected by wall-clock corrections; retry remains demand-driven. | `src/line/provider.ts` |
  | Decrypt or parse failures **fail closed**: a placeholder is shown; content is never guessed. | project rule |
  
  ### Input, limits and abuse resistance
@@ -280,7 +282,7 @@ index c7143f7..59cd0c4 100644
      if (this.events.length >= this.max) return false;
      this.events.push(now);
 diff --git a/src/line/provider.ts b/src/line/provider.ts
-index 58f8902..daa8209 100644
+index 58f8902..f75a1a0 100644
 --- a/src/line/provider.ts
 +++ b/src/line/provider.ts
 @@ -3,7 +3,7 @@ import { BaseClient, type Device, type FetchLike } from "@evex/linejs/base";
@@ -310,22 +312,39 @@ index 58f8902..daa8209 100644
  
  const FRIEND_BATCH = 100;
  const FRIEND_BATCH_CONCURRENCY = 3;
-@@ -615,6 +619,7 @@ export class EvexLineProvider implements LineProvider {
+@@ -154,7 +158,7 @@ export class EvexLineProvider implements LineProvider {
+   // Names and pictures keyed by mid. LINE events carry only mids, so these are learned from the
+   // friend list, profile lookups and (for OpenChat history) the sender names inside events.
+   private profiles = new Map<string, MemberProfile>();
+-  // mid -> time before which a failed lookup is not retried.
++  // mid -> monotonic time before which a failed lookup is not retried.
+   private lookupMisses = new Map<string, number>();
+   // Per chat, the tail of its delivery chain: one slow member lookup holds back only its own chat.
+   private deliveries = new Map<string, Promise<void>>();
+@@ -615,7 +619,8 @@ export class EvexLineProvider implements LineProvider {
     * the generic member name until the retry delay passes.
     */
    private async resolveMembers(client: Client, source: "talk" | "square", mids: Iterable<string>): Promise<void> {
+-    const now = Date.now();
 +    if (this.client !== client) return;
-     const now = Date.now();
++    const now = performance.now();
      const pending = [...new Set(mids)]
        .filter((mid) => (source === "square" ? mid.length > 0 : TALK_USER_MID.test(mid)))
-@@ -628,6 +633,7 @@ export class EvexLineProvider implements LineProvider {
+       .filter((mid) => !this.profiles.get(mid)?.settled && (this.lookupMisses.get(mid) ?? 0) <= now)
+@@ -628,10 +633,11 @@ export class EvexLineProvider implements LineProvider {
      } finally {
        clearTimeout(timer);
      }
+-    const retryAt = Date.now() + LOOKUP_RETRY_MS;
 +    if (this.client !== client) return;
-     const retryAt = Date.now() + LOOKUP_RETRY_MS;
++    const retryAt = performance.now() + LOOKUP_RETRY_MS;
      for (const mid of pending) if (!this.profiles.get(mid)?.settled) this.lookupMisses.set(mid, retryAt);
      if (this.lookupMisses.size > MAX_LOOKUP_MISSES) {
+-      const now = Date.now();
++      const now = performance.now();
+       for (const [mid, until] of this.lookupMisses) if (until <= now) this.lookupMisses.delete(mid);
+     }
+   }
 @@ -652,6 +658,7 @@ export class EvexLineProvider implements LineProvider {
  
    private async lookupSquareMembers(client: Client, mids: string[]): Promise<void> {
@@ -1184,7 +1203,7 @@ index e3ebc41..15e88f1 100644
 +  }
 +});
 diff --git a/test/provider.test.mjs b/test/provider.test.mjs
-index 3dae4b2..603b32f 100644
+index 3dae4b2..51a048e 100644
 --- a/test/provider.test.mjs
 +++ b/test/provider.test.mjs
 @@ -17,6 +17,8 @@ function fakeBase(overrides = {}) {
@@ -1205,10 +1224,43 @@ index 3dae4b2..603b32f 100644
    const provider = new EvexLineProvider(storage, "DESKTOPWIN", {
      onMessage: (message, kind) => received.push({ message, kind }),
      onRead() {}, onStatus() {}, onError: (code) => errors.push(code),
-@@ -72,6 +74,88 @@ test("a slow member lookup holds back only its own chat; each chat keeps arrival
+@@ -72,6 +74,121 @@ test("a slow member lookup holds back only its own chat; each chat keeps arrival
    assert.equal(received[1].message.senderName, `名-${slow.slice(-3)}`);
  });
  
++test("failed member lookups honor elapsed cooldown time across wall-clock corrections", async (t) => {
++  const clock = { elapsed: 0, wall: Date.now() };
++  t.mock.method(performance, "now", () => clock.elapsed);
++  t.mock.method(Date, "now", () => clock.wall);
++  let lookups = 0, available = false;
++  const base = fakeBase({ square: {
++    async getSquareMember() {
++      lookups += 1;
++      if (!available) throw new Error("unavailable");
++      return { squareMember: { displayName: "恢復成員" } };
++    },
++  } });
++  const { provider, received, emit } = await activeProvider(base);
++  const deliver = async (id) => {
++    emit("square:message", { raw: squareRaw(id) });
++    await provider.deliveries.get(SQUARE);
++  };
++  await deliver(1);
++  clock.wall += 300_001;
++  await deliver(2);
++  assert.equal(lookups, 1);
++  clock.wall -= 600_002;
++  clock.elapsed = 299_999;
++  await deliver(3);
++  assert.equal(lookups, 1);
++  available = true;
++  clock.elapsed = 300_000;
++  await deliver(4);
++  assert.equal(lookups, 2);
++  assert.deepEqual(received.map(({ message }) => message.messageId), ["1", "2", "3", "4"]);
++  assert.equal(received.at(-1).message.senderName, "恢復成員");
++});
++
 +test("old member lookups and queued deliveries cannot delay or suppress the next account's lookup", async (t) => {
 +  for (const oldFirst of [true, false]) {
 +    await t.test(oldFirst ? "old lookup finishes first" : "new account delivers first", async () => {
@@ -1294,7 +1346,7 @@ index 3dae4b2..603b32f 100644
  test("a message the hub fails on does not stop later deliveries in that chat", async () => {
    const base = fakeBase();
    const received = [];
-@@ -501,7 +585,9 @@ test("OpenChat concurrent history shares the walk and retains interleaved live d
+@@ -501,7 +618,9 @@ test("OpenChat concurrent history shares the walk and retains interleaved live d
    assert.equal(await provider.fetchMessageMedia("11"), undefined);
  });
  
@@ -1305,7 +1357,7 @@ index 3dae4b2..603b32f 100644
    let walks = 0;
    const other = "m" + "t".repeat(32);
    const base = fakeBase({ square: {
-@@ -518,12 +604,94 @@ test("OpenChat paging survives an earlier live delivery and cache refresh; chats
+@@ -518,12 +637,94 @@ test("OpenChat paging survives an earlier live delivery and cache refresh; chats
    await settle();
    const older = await provider.fetchHistory(channel, 2, newest.cursor);
    assert.deepEqual(older.messages.map((message) => message.messageId), ["1", "2"]);
@@ -1401,7 +1453,7 @@ index 3dae4b2..603b32f 100644
  test("OpenChat walks deduplicate events, consume retained mutations, and authorize media only on the displayed page", async () => {
    const base = fakeBase({ square: {
      async fetchSquareChatEvents() {
-@@ -565,7 +733,9 @@ test("OpenChat an invalidated in-flight walk cannot refill history or media afte
+@@ -565,7 +766,9 @@ test("OpenChat an invalidated in-flight walk cannot refill history or media afte
    assert.equal(provider.mediaOrigins.size, 0);
  });
  
@@ -1412,7 +1464,7 @@ index 3dae4b2..603b32f 100644
    const base = fakeBase({ square: {
      async fetchSquareChatEvents() { return { events: [squareEvent(1), squareEvent(2, SQUARE, "IMAGE")] }; },
      async getSquareMember() { return { squareMember: { displayName: "成員" } }; },
-@@ -580,7 +750,7 @@ test("OpenChat own reaction changes and take-backs remain correct on the next ca
+@@ -580,7 +783,7 @@ test("OpenChat own reaction changes and take-backs remain correct on the next ca
    assert.deepEqual((await provider.fetchHistory(channel, 50)).messages[0].reactions, { counts: { LOVE: 1 }, mine: "LOVE" });
    await provider.react(channel, "1", undefined);
    await provider.unsendMessage(channel, "2");
@@ -1421,7 +1473,7 @@ index 3dae4b2..603b32f 100644
    const page = await provider.fetchHistory(channel, 50);
    assert.equal(page.messages[0].reactions, undefined);
    assert.equal(page.messages[1].unsent, true);
-@@ -621,7 +791,9 @@ test("OpenChat live history remains bounded without shifting message-anchored cu
+@@ -621,7 +824,9 @@ test("OpenChat live history remains bounded without shifting message-anchored cu
    assert.deepEqual((await provider.fetchHistory(channel, 2, latest.cursor)).messages.map((message) => message.messageId), ["5007", "5008"]);
  });
  
@@ -1432,7 +1484,7 @@ index 3dae4b2..603b32f 100644
    let refreshed = false;
    let release;
    const gate = new Promise((resolve) => { release = resolve; });
-@@ -641,7 +813,7 @@ test("OpenChat TTL refresh replaces old live reactions with current history whil
+@@ -641,7 +846,7 @@ test("OpenChat TTL refresh replaces old live reactions with current history whil
    await provider.fetchHistory(channel, 50);
    emit("square:event", squareStatus(1, { 1: 2, 2: { 3: 2 } }));
    emit("square:event", squareStatus(2, { 1: 1, 2: { 3: 1 } }));
@@ -1441,7 +1493,7 @@ index 3dae4b2..603b32f 100644
    refreshed = true;
    const refreshing = provider.fetchHistory(channel, 50);
    emit("square:event", squareStatus(2, { 1: 0, 2: {} }));
-@@ -650,3 +822,78 @@ test("OpenChat TTL refresh replaces old live reactions with current history whil
+@@ -650,3 +855,78 @@ test("OpenChat TTL refresh replaces old live reactions with current history whil
    assert.deepEqual(page.messages[0].reactions, { counts: { LOVE: 3 } }, "history replaces reactions from before this refresh");
    assert.equal(page.messages[1].reactions, undefined, "live removal during refresh still overrides the walked snapshot");
  });
