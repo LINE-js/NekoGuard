@@ -346,6 +346,39 @@ test('parallel chats share analysis, administrator and send pacing even when wai
   }
 });
 
+for (const shift of [-60_000, 60_000]) {
+  test(`wall-clock adjustments (${shift}ms) neither bypass nor stall API pacing`, async t => {
+    const now = Date.now;
+    let offset = 0;
+    t.mock.method(Date, 'now', () => now() + offset);
+    const dispatches = [];
+    const h = harness({
+      intervals: { checkIntervalMs: 20, adminIntervalMs: 20, sendIntervalMs: 20 },
+      onRequest: type => {
+        dispatches.push({ type, at: performance.now() });
+        offset += shift;
+      },
+    });
+    // Bound a regressed backwards-clock stall without leaving its timers alive.
+    const deadline = setTimeout(() => h.guard.stop(), 2500);
+    try {
+      h.guard.handle({ type: 'message', message: message(1) });
+      h.guard.handle({ type: 'message', message: message(2) });
+      await h.guard.whenIdle();
+      assert.equal(h.sends.length, 2);
+      for (const [type, count] of [['scam:check', 2], ['chat:admins:get', 3], ['message:send', 2]]) {
+        const times = dispatches.filter(call => call.type === type).map(call => call.at);
+        assert.equal(times.length, count);
+        for (let i = 1; i < times.length; i++) assert(times[i] - times[i - 1] >= 19.5, type);
+      }
+    } finally {
+      clearTimeout(deadline);
+      h.guard.stop();
+      await h.guard.whenIdle();
+    }
+  });
+}
+
 test('an edit invalidates an in-flight result even when the analysis queue is full', async () => {
   const release = Promise.withResolvers();
   const h = harness({ check: async fields => {

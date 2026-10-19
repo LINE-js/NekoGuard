@@ -44,6 +44,7 @@ export class ScamGuard extends EventEmitter {
   private notifying = new Map<string, Promise<void>>();
   private adminTails = new Map<string, Promise<unknown>>();
   private waits = new Map<Work, AbortController>();
+  // Elapsed-time quotas must not jump or stall when the wall clock is adjusted.
   private nextCheck = 0;
   private nextSend = 0;
   private nextAdmins = 0;
@@ -264,12 +265,12 @@ export class ScamGuard extends EventEmitter {
     if (message.senderId === this.userId || message.senderId === this.ownMembers.get(message.channelId)) return;
     // Recheck after waking: other workers or a delayed event loop may have
     // consumed the slot. Reserve only at actual dispatch, never in the future.
-    while (this.nextCheck > Date.now()) {
-      await this.wait(work, this.nextCheck - Date.now());
+    while (this.nextCheck > performance.now()) {
+      await this.wait(work, this.nextCheck - performance.now());
       if (!this.current(work)) return;
     }
     if (!this.current(work)) return;
-    this.nextCheck = Date.now() + (this.options.checkIntervalMs ?? 6100);
+    this.nextCheck = performance.now() + (this.options.checkIntervalMs ?? 6100);
     const result = await this.api.request("scam:check", {
       chatId: message.channelId, messageId: message.messageId,
     }, "scam:result");
@@ -300,12 +301,12 @@ export class ScamGuard extends EventEmitter {
     const alerts = buildAlerts(message, analysis, members.admins);
     let sent = 0;
     for (const alert of alerts) {
-      while (this.nextSend > Date.now()) {
-        await this.wait(work, this.nextSend - Date.now());
+      while (this.nextSend > performance.now()) {
+        await this.wait(work, this.nextSend - performance.now());
         if (!this.current(work)) return;
       }
       if (!this.current(work)) return;
-      this.nextSend = Date.now() + (this.options.sendIntervalMs ?? 3100);
+      this.nextSend = performance.now() + (this.options.sendIntervalMs ?? 3100);
       await this.api.request("message:send", { chatId: message.channelId, ...alert }, "sent");
       if (!this.current(work)) return;
       sent += alert.mentions.length;
@@ -314,12 +315,12 @@ export class ScamGuard extends EventEmitter {
   }
 
   private async fetchAdmins(work: Work) {
-    while (this.nextAdmins > Date.now()) {
-      await this.wait(work, this.nextAdmins - Date.now());
+    while (this.nextAdmins > performance.now()) {
+      await this.wait(work, this.nextAdmins - performance.now());
       if (!this.current(work)) return;
     }
     if (!this.current(work)) return;
-    this.nextAdmins = Date.now() + (this.options.adminIntervalMs ?? 6100);
+    this.nextAdmins = performance.now() + (this.options.adminIntervalMs ?? 6100);
     const frame = await this.api.request("chat:admins:get", { chatId: work.message.channelId }, "chat:admins");
     if (!this.current(work)) return;
     const members = parseAdmins(frame, work.message.channelId);
