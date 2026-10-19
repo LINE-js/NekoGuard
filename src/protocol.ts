@@ -65,7 +65,7 @@ export function parseAdmins(frame: Frame, chatId: string): { admins: Admin[]; ow
   return { admins, ownMemberId: frame.ownMemberId };
 }
 
-export function parseAnalysis(frame: Frame, message: Message): ScamAnalysis {
+export function parseAnalysis(frame: Frame, message: Pick<Message, "channelId" | "messageId">): ScamAnalysis {
   const analysis = frame.analysis;
   if (frame.chatId !== message.channelId || frame.messageId !== message.messageId
     || !record(analysis) || !unit(analysis.probability)) throw new Error("INVALID_SCAM_RESPONSE");

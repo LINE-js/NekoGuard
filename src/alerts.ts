@@ -14,7 +14,7 @@ const tacticLabels: Readonly<Record<string, string>> = {
 };
 
 export function buildAlerts(
-  message: Message,
+  message: Pick<Message, 'messageId'>,
   analysis: ScamAnalysis,
   admins: readonly Admin[],
 ): Array<{ text: string; mentions: Mention[]; replyTo: string }> {

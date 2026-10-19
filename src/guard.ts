@@ -8,7 +8,7 @@ import { isMessage, parseAdmins, parseAnalysis, record, type Api, type Frame, ty
 interface Work {
   key: string;
   signature: string;
-  message: Message;
+  message: Pick<Message, "messageId" | "channelId" | "senderId">;
   generation: number;
 }
 
@@ -100,7 +100,11 @@ export class ScamGuard extends EventEmitter {
       this.emit("notice", "ANALYSIS_QUEUE_FULL");
       return;
     }
-    const work: Work = { key, signature, message, generation: this.generation };
+    // Analysis uses the backend's cached text; retain no incoming payload or sender name.
+    const work: Work = {
+      key, signature, generation: this.generation,
+      message: { messageId: message.messageId, channelId: message.channelId, senderId: message.senderId },
+    };
     this.recent.delete(key);
     this.recent.set(key, work);
     if (this.recent.size > MAX_RECENT) this.recent.delete(this.recent.keys().next().value!);
