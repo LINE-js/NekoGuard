@@ -1,8 +1,8 @@
 diff --git a/AGENTS.md b/AGENTS.md
-index 59cf16e..ad7b39f 100644
+index 59cf16e..9fecc46 100644
 --- a/AGENTS.md
 +++ b/AGENTS.md
-@@ -62,14 +62,23 @@ Gate 依 [PLAN.md](PLAN.md) 逐關驗收，不跳關；Gate 0 遠端需存在四
+@@ -62,14 +62,24 @@ Gate 依 [PLAN.md](PLAN.md) 逐關驗收，不跳關；Gate 0 遠端需存在四
  2. QR URL 與 PIN **一次性顯示、不入日誌、不落盤**。
  3. `session.json` 含憑證與 E2EE key material：chmod **600**、列入 `.gitignore`、不入日誌、不分享。
  4. 網頁 WS 升級須 `Origin`（`http`／`https`，後者供 TLS 反向代理／自訂網域）的主機部分等於 `Host` 標頭並帶瀏覽器 cookie；其餘來源拒絕升級。
@@ -23,13 +23,14 @@ index 59cf16e..ad7b39f 100644
 +15. WebSocket 操作與 HTTP 上傳的滑動窗口限流使用單調時鐘 `performance.now()`；不得以系統時間校正提早恢復配額或延長限制。既有配額、窗口長度及每連線／全域共用範圍不變。頻道異動的三十秒刷新間隔亦使用單調時間，保留三秒合併；首次異動不得因程序剛啟動而多等，登出取消排程並重設間隔。
 +16. 成員顯示資料查詢、失敗退避與訊息傳遞佇列屬於當前登入工作階段。登出作廢舊佇列，舊查詢不得啟動後續批次或寫入新帳號的重試狀態，新帳號訊息不得等待舊查詢。已送出的外部要求可能仍會完成，但結果不得跨帳號生效。既有五分鐘失敗退避使用單調時間，校時不得提前解除或延長等待；只在後續有需求時重試。同一 OpenChat 成員及 talk 聯絡人批次中重疊的 ID 共用尚未完成的顯示資料查詢；talk 只傳送新 ID，保留每批百人上限，OpenChat 後續批次略過等待期間已取得的資料。各呼叫仍最多等候五秒。完成／失敗回收共用關聯，登出清空，舊結果不得移除新登入的查詢，不影響管理員授權查證。頻道清單亦須在非同步階段確認登入歸屬，失效後不得續取好友批次、訊息匣或 OpenChat 摘要，或以舊資料填入新帳號的暱稱與預覽；當前帳號的摘要失敗降級維持不變。
 +17. 新成員冒充檢查（小語裁示）：`member:join` 只送機器人、只限 `api.chats` 內已知 OpenChat、不含本帳號成員。`avatar:check` 只可查本次登入通知過的加入者（最多 500 筆，登出清空），不接受用戶端提供的圖片或任意成員；伺服器重新查詢目前大頭貼，只送 PNG／JPEG 至 TypeSafe（必帶 `TypeSafe-Danger-Zone-Images: true`、每次新 UUID 參照、拒絕重新導向），與 `scam:check` 共用機器人付費額度，回應 fail-closed，日誌只記 `AVATAR_CHECK_FAILED`。
++    加入事件不得只依帳號層 `fetchMyEvents`（不含他人加入）：只對 `api.chats` 內的 OpenChat 讀取各自的 `fetchSquareChatEvents`，首次讀取只採最近 5 分鐘的加入、之後以 syncToken 增量；提示事件（42、13 成員數增加）立即讀，另 30 秒輪詢；每聊天室單一讀取、事件去重、登出清除。
 +
 +`scam:check` 的本地訊息資格檢查必須先於成員查詢，避免不存在或不可分析的訊息觸發 LINE 請求；未知自己身分的查詢完成後必須重讀並重新驗證訊息，不能分析等待前的舊快照。
 +同一登入工作階段、同一聊天室的並行分析僅共用尚未完成的自己身分查詢；完成／失敗回收，登出清空，舊查詢不能填入或刪除新工作階段的查詢狀態。不共用管理員授權或明確的 `chat:admins:get` 查詢，不自動重試，不合併付費分析或其限額。
  
  內部日誌也不得包含憑證、token、QR URL、PIN 或 key material；不得直接 dump 套件錯誤物件、session 或登入 payload。圖片／貼圖／影片／語音位元組一律走 HTTP，WS 不傳位元組；收到的檔案只以 `file-<id>` 附件下載（`Content-Disposition: attachment`、`application/octet-stream`，不嗅探、不內嵌），規則同收到的媒體。訊息不落盤；每頻道最多 500 則，同 messageId 去重，編輯覆寫快取。LINE listen 失效採退避重啟；QR 失敗不自動循環，須由使用者動作重新產生。
  
-@@ -77,6 +86,8 @@ Gate 依 [PLAN.md](PLAN.md) 逐關驗收，不跳關；Gate 0 遠端需存在四
+@@ -77,6 +87,8 @@ Gate 依 [PLAN.md](PLAN.md) 逐關驗收，不跳關；Gate 0 遠端需存在四
  
  其他 adapter 注意事項：OpenChat 歷史無「最新 N 則」查詢，只能由最舊事件向前走完再於記憶體分頁（快取 10 分鐘，期間以即時訊息與自己送出的訊息補上；LINE 監聽出錯即整個捨棄）；talk 歷史游標為 `deliveredTime:messageId` 且上界含端點，需多取一則並剔除錨點；非好友的群組成員名稱與大頭照以 `getContactsV2`／`getSquareMember` 補查（限時、限量、失敗退避），社群管理員角色同樣來自 `getSquareMember`；他人已讀位置來自 `getMessageReadRange` 與 `NOTIFIED_READ_MESSAGE`。**回報自己的已讀**（`sendChatChecked`／OpenChat `markAsRead`）會改變真實帳號狀態（對方看到「已讀」），因此只在小語要求下啟用：由網頁在聊天開啟且頁面可見時送 `chat:read`，伺服器只接受已顯示過的訊息、每個位置只送一次，並可用 `chat.sendReadReceipts: false` 關閉；驗證時不得對真實聯絡人的聊天室測試。已擁有貼圖包來自商店服務 `getOwnedProductSummaries`（linejs 3.4.2 未接線，經 `base.request.request` 呼叫 `/TSHOP4`），貼圖 id 與標題來自公開 CDN 的 `productInfo.meta`，失敗時退回 LINE 回傳的 id 區間。即時事件依聊天室各自排序處理：一個聊天室的成員查詢變慢不會拖住其他聊天室；好友資料以每批 100 人、最多 3 批同時查詢。
  
@@ -39,10 +40,10 @@ index 59cf16e..ad7b39f 100644
  
  LINE operation 與連線注意事項：linejs 未記載多數 operation 的參數排列，`SEND_CHAT_CHECKED`（手機已讀）只取 `param1` 且須為伺服器已知聊天室；群組／個人資料／聊天室成員變動不解析參數，只觸發節流的頻道清單重新整理（3 秒合併、最多每 30 秒一次），不得改成依參數猜測內容。頻道清單的最後一則訊息（`Channel.lastMessage`）是預覽，不登記媒體來源，不能藉此下載。WS 心跳：伺服器以協定層 Ping 每 30 秒檢查、兩輪無回應即關閉；網頁 `ping` 需 10 秒內收到 `pong`，回到前景立即探測。斷線記錄（網頁主控台、服務日誌 `WS_CLOSED`）只可含時間、close code、截短的 reason 與前後景狀態，不得含標頭、cookie 或 Token。
 diff --git a/PLAN.md b/PLAN.md
-index 49acd5b..580b4ea 100644
+index 49acd5b..3b84b08 100644
 --- a/PLAN.md
 +++ b/PLAN.md
-@@ -144,23 +144,80 @@
+@@ -144,23 +144,81 @@
  
  > 實作補完（協定版本仍為 2）：登出／換帳號以 session generation 作廢歷史、發送、回應、收回、已讀與頻道查詢的舊結果；歷史重新載入也同步清除已取消的回應。OpenChat 歷史採同聊天室 single-flight、時間＋訊息 id 錨點，快取最多 5 個聊天室各 5000 則、10 分鐘，合併即時訊息與狀態，過期時重新取得回應，僅已提供頁面的訊息授權媒體。網頁搜尋維持即時更新並跨聊天室依時間排序；初次歷史失敗可重試，回應更新不重建媒體 DOM，登出清除搜尋、私人畫面與通知。隔離測試與無頭靜音瀏覽器已驗證；尚未對本次變動重新進行真實 LINE Gate 驗收。
  
@@ -107,6 +108,7 @@ index 49acd5b..580b4ea 100644
 +> 限流時鐘：WebSocket 操作與 HTTP 上傳的滑動窗口均使用單調經過時間；系統校時不能提早恢復配額或延長限制，既有額度、窗口長度與共用範圍不變。
 +
 +> 新成員冒充檢查（小語裁示，協定版本仍為 2）：`hello.capabilities` 加入 `"member:join"`。LINE `NOTIFIED_JOIN_SQUARE_CHAT`（2）解析 `joinedMember`，僅對 `api.chats` 內已知 OpenChat、非本帳號成員送機器人 `member:join { chatId, member: { userId, displayName } }`（名稱缺漏為空字串，不送網頁）。機器人 `avatar:check { requestId, chatId, memberId }` 只接受本次登入通知過的加入者（最近 500 筆），以 `getSquareMember` 取得目前 `profileImageObsHash`、從 obs CDN 取小圖，僅 PNG／JPEG 以 `assets`（每次新 UUID）與 `TypeSafe-Danger-Zone-Images: true` 送 Jev noul 題問是否有皇冠；回 `avatar:result { requestId, chatId, memberId, analysis?: { probability } }`（無大頭貼不含 analysis），失敗 `AVATAR_CHECK_FAILED`，未設金鑰 `AVATAR_CHECK_UNAVAILABLE`，與 `scam:check` 共用機器人每分鐘 10 次。TypeSafe 圖片功能屬實驗性（Dreamer-ready）；尚未以真實帳號與有效金鑰實測。
++> 加入事件來源修正（小語回報實際加入未觸發）：帳號層 `fetchMyEvents` 不帶他人的 `NOTIFIED_JOIN_SQUARE_CHAT`。改為對 `api.enabled` 時 `api.chats` 內的 OpenChat 讀取各自的 `fetchSquareChatEvents`：登入後先讀一次定位（只採最近 5 分鐘內的加入），之後以保存的 syncToken 增量讀取；`NOTIFICATION_NEW_CHAT_MEMBER`（42）或 `NOTIFIED_UPDATE_SQUARE_CHAT_STATUS`（13）成員數增加時立即讀，另每 30 秒輪詢一次。每聊天室同時只一個讀取，期間的提示於結束後再讀一次；同一事件（聊天室＋成員＋時間）只通知一次，登出清除位置與計時器。服務日誌記 `LINE 社群新成員：chat=… member=…`（不含名稱）。事件來源依 linejs 型別推斷，尚未以真實帳號驗證。
 +
  ### Server → Client
  
@@ -124,7 +126,7 @@ index 49acd5b..580b4ea 100644
  | `channels` | `{ channels: Channel[] }`（snapshot，連線即送、變動重送） |
  | `messages` | `{ chatId, messages: Message[] }`（連線時快照，每個聊天室一個影格；舊訊息，不計未讀） |
  | `message` | `{ message: Message }`（即時新訊息） |
-@@ -190,6 +247,8 @@
+@@ -190,6 +248,8 @@
  | `message:react` | `{ requestId, chatId, messageId, reaction: "NICE"｜"LOVE"｜"FUN"｜"AMAZING"｜"SAD"｜"OMG"｜null }`（僅網頁，與 `message:send` 共用頻率上限） |
  | `scam:check` | `{ requestId, chatId, messageId }`（網頁每連線每分鐘 10 次；機器人限 `api.chats`、所有機器人合計每分鐘 10 次；只接受別人傳來、已顯示、未收回的文字訊息） |
  | `profile:get` | `{ requestId }`（自己的 `profile`；網頁與機器人皆可，不呼叫 LINE） |
@@ -133,7 +135,7 @@ index 49acd5b..580b4ea 100644
  | `channels:refresh` | `{}` |
  | `api:token:create` / `api:token:revoke` | `{}`（產生或撤銷機器人 Token，並中斷所有機器人連線） |
  | `ping` | `{}` |
-@@ -197,7 +256,7 @@
+@@ -197,7 +257,7 @@
  ### 機器人 API（`/api/ws`）
  - 升級條件：`api.enabled`、**無 `Origin`**、`Authorization: Bearer linejs_…` 符合目前 Token；否則 403（同時超過 4 個連線回 429）。`Host` 不限制（同網頁）。
  - 連線時收到 `hello`、`auth:state`、`status`、`auth:ready`、僅含 `api.chats` 的 `channels`；之後只有這些聊天室的 `message`／`message:edit`。不重播、不給 `read`／`update:available`／`api:state`。
@@ -143,7 +145,7 @@ index 49acd5b..580b4ea 100644
  
  ### HTTP
 diff --git a/README.en.md b/README.en.md
-index 6b97c31..ada28d3 100644
+index 6b97c31..ed518d2 100644
 --- a/README.en.md
 +++ b/README.en.md
 @@ -26,7 +26,27 @@ flowchart LR
@@ -201,7 +203,7 @@ index 6b97c31..ada28d3 100644
  | Service → Bot | `channels` | Only chat rooms in `api.chats`; resent on changes |
  | Service → Bot | `message`, `message:edit`, `message:unsend` | Only **live** messages, edits and take-backs from chat rooms in `api.chats`, including your own |
 -| Service → Bot | `sent`, `history`, `scam:result`, `profile`, `error` | Responses to corresponding requests; errors contain only generic codes (`UNKNOWN_CHAT`, `INVALID_REQUEST`, `RATE_LIMITED`, `SEND_FAILED`, `SCAM_CHECK_FAILED`…) |
-+| Service → Bot | `member:join` | `{ chatId, member: { userId, displayName } }`: sent live when someone joins an OpenChat in `api.chats` (LINE `NOTIFIED_JOIN_SQUARE_CHAT`); never this account; `displayName` is empty when LINE sends none. Advertised by `"member:join"` in `hello.capabilities` |
++| Service → Bot | `member:join` | `{ chatId, member: { userId, displayName } }`: sent when someone joins an OpenChat in `api.chats` (read from `NOTIFIED_JOIN_SQUARE_CHAT` in that chat's own events; read at once on LINE's new-member notice or a member-count increase, and otherwise checked every 30 seconds, so at most about 30 seconds late); never this account; `displayName` is empty when LINE sends none. Advertised by `"member:join"` in `hello.capabilities` |
 +| Service → Bot | `sent`, `history`, `scam:result`, `chat:admins`, `profile`, `error` | Responses to corresponding requests; errors contain only generic codes (`UNKNOWN_CHAT`, `INVALID_REQUEST`, `RATE_LIMITED`, `SEND_FAILED`, `SCAM_CHECK_FAILED`…) |
  
  Everything else returns `UNKNOWN_TYPE`: no login/logout, `chat:read` (sending read receipts), `message:unsend` (taking back), `message:react` (reactions), `channels:refresh`, sticker lists, or Token management. **Old messages are not replayed** (bots start from “now” and do not respond to history again; use `history:fetch` for history). No `read`, `update:available`, `api:state`, or `scam:state` is provided. Image/video and other media bytes are also inaccessible (bots see only the message's `contentType`).
@@ -221,7 +223,7 @@ index 6b97c31..ada28d3 100644
  
  ```js
 diff --git a/README.ja.md b/README.ja.md
-index a6e80b5..0b8e9f3 100644
+index a6e80b5..35e990c 100644
 --- a/README.ja.md
 +++ b/README.ja.md
 @@ -26,7 +26,27 @@ flowchart LR
@@ -279,7 +281,7 @@ index a6e80b5..0b8e9f3 100644
  | サービス → ボット | `channels` | `api.chats` のチャットルームのみ。変更時に再送します |
  | サービス → ボット | `message`、`message:edit`、`message:unsend` | `api.chats` のチャットルームの**リアルタイム**メッセージ、編集、送信取消のみ。自分が送ったものも含みます |
 -| サービス → ボット | `sent`、`history`、`scam:result`、`profile`、`error` | 対応するリクエストへの応答。エラーは汎用コードのみ（`UNKNOWN_CHAT`、`INVALID_REQUEST`、`RATE_LIMITED`、`SEND_FAILED`、`SCAM_CHECK_FAILED`…） |
-+| サービス → ボット | `member:join` | `{ chatId, member: { userId, displayName } }`：`api.chats` 内の OpenChat に誰かが参加するとリアルタイムで送信（LINE の `NOTIFIED_JOIN_SQUARE_CHAT`）。自分は含まず、LINE が名前を送らない場合 `displayName` は空文字列。対応時は `hello.capabilities` に `"member:join"` を含みます |
++| サービス → ボット | `member:join` | `{ chatId, member: { userId, displayName } }`：`api.chats` 内の OpenChat に誰かが参加すると送信（そのチャット自身のイベントの `NOTIFIED_JOIN_SQUARE_CHAT` を読み取り。LINE の新メンバー通知やメンバー数の増加時は即座に、それ以外は 30 秒ごとに確認するため、遅くとも約 30 秒）。自分は含まず、LINE が名前を送らない場合 `displayName` は空文字列。対応時は `hello.capabilities` に `"member:join"` を含みます |
 +| サービス → ボット | `sent`、`history`、`scam:result`、`chat:admins`、`profile`、`error` | 対応するリクエストへの応答。エラーは汎用コードのみ（`UNKNOWN_CHAT`、`INVALID_REQUEST`、`RATE_LIMITED`、`SEND_FAILED`、`SCAM_CHECK_FAILED`…） |
  
  それ以外はすべて `UNKNOWN_TYPE` を返します。ログイン／ログアウト、`chat:read`（既読通知）、`message:unsend`（送信取消）、`message:react`（リアクション）、`channels:refresh`、スタンプ一覧、Token 管理は利用できません。**過去のメッセージは再送しません**（ボットは「今」から開始し、履歴に重複して応答しません。履歴は `history:fetch` を使ってください）。`read`、`update:available`、`api:state`、`scam:state` は送信しません。画像／動画などのメディアのバイト列も取得できません（ボットにはメッセージの `contentType` のみ見えます）。
@@ -299,7 +301,7 @@ index a6e80b5..0b8e9f3 100644
  
  ```js
 diff --git a/README.md b/README.md
-index 7704eb9..5665872 100644
+index 7704eb9..54bd194 100644
 --- a/README.md
 +++ b/README.md
 @@ -26,7 +26,27 @@ flowchart LR
@@ -357,7 +359,7 @@ index 7704eb9..5665872 100644
  | 服務 → 機器人 | `channels` | 只含 `api.chats` 內的聊天室；有變動時重送 |
  | 服務 → 機器人 | `message`、`message:edit`、`message:unsend` | 只有 `api.chats` 內聊天室的**即時**訊息、編輯與收回；包含你自己發的 |
 -| 服務 → 機器人 | `sent`、`history`、`scam:result`、`profile`、`error` | 對應請求的回應；錯誤只有 generic 代碼（`UNKNOWN_CHAT`、`INVALID_REQUEST`、`RATE_LIMITED`、`SEND_FAILED`、`SCAM_CHECK_FAILED`…） |
-+| 服務 → 機器人 | `member:join` | `{ chatId, member: { userId, displayName } }`：`api.chats` 內 OpenChat 有人加入時即時送出（LINE `NOTIFIED_JOIN_SQUARE_CHAT`）；不含本帳號，LINE 未附名稱時 `displayName` 為空字串。`hello.capabilities` 含 `"member:join"` 才支援 |
++| 服務 → 機器人 | `member:join` | `{ chatId, member: { userId, displayName } }`：`api.chats` 內 OpenChat 有人加入時送出（讀取該聊天室事件中的 `NOTIFIED_JOIN_SQUARE_CHAT`；LINE 的新成員通知或成員數增加時立即讀取，另每 30 秒檢查一次，最慢約 30 秒）；不含本帳號，LINE 未附名稱時 `displayName` 為空字串。`hello.capabilities` 含 `"member:join"` 才支援 |
 +| 服務 → 機器人 | `sent`、`history`、`scam:result`、`chat:admins`、`profile`、`error` | 對應請求的回應；錯誤只有 generic 代碼（`UNKNOWN_CHAT`、`INVALID_REQUEST`、`RATE_LIMITED`、`SEND_FAILED`、`SCAM_CHECK_FAILED`…） |
  
  其餘一律回 `UNKNOWN_TYPE`：沒有登入／登出、`chat:read`（已讀回報）、`message:unsend`（收回）、`message:react`（回應）、`channels:refresh`、貼圖清單、Token 管理。**不重播舊訊息**（機器人從「現在」開始，不會重複回應歷史；要歷史請用 `history:fetch`）；不給 `read`、`update:available`、`api:state`、`scam:state`；圖片／影片等媒體位元組也無法取得（機器人只看到訊息的 `contentType`）。
@@ -620,7 +622,7 @@ index c7143f7..59cd0c4 100644
      if (this.events.length >= this.max) return false;
      this.events.push(now);
 diff --git a/src/line/provider.ts b/src/line/provider.ts
-index 58f8902..7a3f03d 100644
+index 58f8902..d5ff70a 100644
 --- a/src/line/provider.ts
 +++ b/src/line/provider.ts
 @@ -3,7 +3,7 @@ import { BaseClient, type Device, type FetchLike } from "@evex/linejs/base";
@@ -641,16 +643,21 @@ index 58f8902..7a3f03d 100644
    onStatus: (state: "listening" | "reconnecting") => void;
    onError: (code: "SESSION_WRITE_FAILED" | "LINE_LISTEN_FAILED" | "MESSAGE_PARSE_FAILED") => void;
  }
-@@ -55,6 +57,8 @@ export interface LineProvider {
+@@ -55,6 +57,13 @@ export interface LineProvider {
    getProfile(): Profile;
    fetchSticker(stickerId: string, animated: boolean): Promise<MediaBytes | undefined>;
    fetchAvatar(host: AvatarHost, hash: string, full: boolean): Promise<MediaBytes | undefined>;
 +  /** An OpenChat member's current profile picture (small preview), freshly looked up; undefined without one. */
 +  fetchSquareMemberPicture(memberId: string): Promise<MediaBytes | undefined>;
++  /**
++   * OpenChat chats whose joins must be reported. LINE's account-wide event stream does not carry
++   * other members' joins, so these chats' own event streams are followed (see syncJoins).
++   */
++  watchSquareJoins(chatIds: Iterable<string>): void;
    fetchMessageMedia(messageId: string): Promise<MediaBytes | undefined>;
    /** A file someone sent, as raw bytes with its name; never sniffed or shown inline. */
    fetchMessageFile(messageId: string): Promise<MediaBytes | undefined>;
-@@ -69,6 +73,8 @@ export interface LineProvider {
+@@ -69,6 +78,8 @@ export interface LineProvider {
    /** Where other members have read up to; empty when LINE has none (or the chat type has no receipts). */
    fetchReadPositions(channel: ChannelRef): Promise<ReadPosition[]>;
    fetchChannels(): Promise<Channel[]>;
@@ -659,7 +666,7 @@ index 58f8902..7a3f03d 100644
    fetchHistory(channel: ChannelRef, limit: number, before?: string): Promise<HistoryPage>;
    sendText(channel: ChannelRef, text: string, options?: SendTextOptions): Promise<Message>;
    sendSticker(channel: ChannelRef, packageId: number, stickerId: number): Promise<Message>;
-@@ -82,6 +88,8 @@ export interface LineProvider {
+@@ -82,6 +93,8 @@ export interface LineProvider {
  }
  
  const UNKNOWN_MEMBER = "成員";
@@ -668,15 +675,22 @@ index 58f8902..7a3f03d 100644
  
  const FRIEND_BATCH = 100;
  const FRIEND_BATCH_CONCURRENCY = 3;
-@@ -102,6 +110,7 @@ const LOOKUP_RETRY_MS = 5 * 60 * 1000;
+@@ -102,6 +115,14 @@ const LOOKUP_RETRY_MS = 5 * 60 * 1000;
  // Past this many remembered failures, expired ones are dropped (they no longer block a retry anyway).
  const MAX_LOOKUP_MISSES = 2000;
  const TALK_USER_MID = /^u[0-9a-f]{32}$/;
 +const SQUARE_MEMBER_MID = /^p[A-Za-z0-9]{10,64}$/;
++// Followed chats are re-read this often even without a hint from the account-wide stream.
++const JOIN_POLL_MS = 30_000;
++// On the first read of a chat only joins this recent are new; older ones predate the service.
++const JOIN_PRIMING_WINDOW_MS = 5 * 60_000;
++const MAX_SEEN_JOINS = 2000;
++// OpenChat chat mids (observed as "m…").
++const SQUARE_CHAT_MID = /^[ms][A-Za-z0-9]{10,64}$/;
  const STICKER_PACKS_CACHE_MS = 10 * 60 * 1000;
  const PACK_META_CONCURRENCY = 4;
  const UNREAD_MAX_PAGES = 20;
-@@ -154,12 +163,15 @@ export class EvexLineProvider implements LineProvider {
+@@ -154,16 +175,27 @@ export class EvexLineProvider implements LineProvider {
    // Names and pictures keyed by mid. LINE events carry only mids, so these are learned from the
    // friend list, profile lookups and (for OpenChat history) the sender names inside events.
    private profiles = new Map<string, MemberProfile>();
@@ -693,21 +707,113 @@ index 58f8902..7a3f03d 100644
    // Messages whose media the browser may ask for, newest last. Requests are only honoured for
    // messages seen here, so the browser cannot use this session to probe arbitrary LINE objects.
    private mediaOrigins = new Map<string, { raw: LineMessage; square: boolean }>();
-@@ -300,6 +312,13 @@ export class EvexLineProvider implements LineProvider {
+   private previewDecrypts = new Map<string, { raw: LineMessage; undecryptable: boolean }>();
++  private joinWatch = new Set<string>();
++  private joinTimer?: NodeJS.Timeout;
++  // Per followed chat: the event-stream position after the newest event already read.
++  private joinTokens = new Map<string, string>();
++  private joinSyncs = new Map<string, Promise<void>>();
++  private joinAgain = new Set<string>();
++  private joinsSeen = new Set<string>();
++  private memberCounts = new Map<string, number>();
+ 
+   constructor(
+     private readonly storage: SessionStorage,
+@@ -300,9 +332,93 @@ export class EvexLineProvider implements LineProvider {
            this.updateSquareMessage(update.squareChatMid, update.messageId, { reactions });
            this.events.onReactions(update.squareChatMid, update.messageId, reactions);
          }
 +      } else if (type === "NOTIFIED_JOIN_SQUARE_CHAT" || type === "2") {
-+        const joined = event.payload?.notifiedJoinSquareChat;
-+        const member = joined?.joinedMember;
-+        if (typeof joined?.squareChatMid !== "string" || typeof member?.squareMemberMid !== "string" || !SQUARE_MEMBER_MID.test(member.squareMemberMid)) return;
-+        const name = typeof member.displayName === "string" ? member.displayName : "";
-+        if (name) this.rememberProfile(member.squareMemberMid, name, avatarMediaId("obs", member.profileImageObsHash), true, memberRole(member.role));
-+        this.events.onMemberJoin(joined.squareChatMid, { userId: member.squareMemberMid, displayName: name });
++        this.squareJoined(event);
++      } else if (type === "NOTIFICATION_NEW_CHAT_MEMBER" || type === "42") {
++        // Says only that someone joined; who joined is in the chat's own event stream.
++        const chatId = event.payload?.notificationNewChatMember?.squareChatMid;
++        if (typeof chatId === "string" && this.joinWatch.has(chatId)) void this.syncJoins(client, chatId);
++      } else if (type === "NOTIFIED_UPDATE_SQUARE_CHAT_STATUS" || type === "13") {
++        const update = event.payload?.notifiedUpdateSquareChatStatus;
++        const chatId = update?.squareChatMid;
++        const count = Number(update?.statusWithoutMessage?.memberCount);
++        if (typeof chatId !== "string" || !this.joinWatch.has(chatId) || !Number.isSafeInteger(count)) return;
++        const previous = this.memberCounts.get(chatId);
++        this.memberCounts.set(chatId, count);
++        if (previous !== undefined && count > previous) void this.syncJoins(client, chatId);
        }
      });
      this.listen();
-@@ -420,11 +439,18 @@ export class EvexLineProvider implements LineProvider {
++    this.startJoinPolling();
++  }
++
++  watchSquareJoins(chatIds: Iterable<string>): void {
++    this.joinWatch = new Set([...chatIds].filter((chatId) => SQUARE_CHAT_MID.test(chatId)));
++    this.startJoinPolling();
++  }
++
++  private startJoinPolling(): void {
++    clearInterval(this.joinTimer);
++    this.joinTimer = undefined;
++    const client = this.client;
++    if (!client || this.joinWatch.size === 0) return;
++    const poll = () => { for (const chatId of this.joinWatch) void this.syncJoins(client, chatId); };
++    // Reading each chat once now fixes its position, so later joins are found incrementally.
++    poll();
++    this.joinTimer = setInterval(() => { if (this.client === client) poll(); }, JOIN_POLL_MS);
++    this.joinTimer.unref();
++  }
++
++  /** One read per chat at a time; a hint arriving meanwhile reads again once it ends. */
++  private syncJoins(client: Client, chatId: string): Promise<void> {
++    const running = this.joinSyncs.get(chatId);
++    if (running) {
++      this.joinAgain.add(chatId);
++      return running;
++    }
++    const task = this.readJoins(client, chatId).catch(() => {
++      // Best effort: the next hint or poll reads again from the last known position.
++    }).finally(() => {
++      if (this.joinSyncs.get(chatId) === task) this.joinSyncs.delete(chatId);
++      if (this.joinAgain.delete(chatId) && this.client === client) void this.syncJoins(client, chatId);
++    });
++    this.joinSyncs.set(chatId, task);
++    return task;
++  }
++
++  private async readJoins(client: Client, chatId: string): Promise<void> {
++    const known = this.joinTokens.get(chatId);
++    const since = known === undefined ? Date.now() - JOIN_PRIMING_WINDOW_MS : -Infinity;
++    let token: { syncToken?: string; continuationToken?: string } = known === undefined ? {} : { syncToken: known };
++    for (let page = 0; page < SQUARE_MAX_PAGES; page += 1) {
++      const response = await client.base.square.fetchSquareChatEvents({
++        squareChatMid: chatId, limit: SQUARE_PAGE_SIZE, ...token,
++      } as Parameters<Client["base"]["square"]["fetchSquareChatEvents"]>[0]);
++      if (this.client !== client) return;
++      for (const event of response.events ?? []) {
++        if (Number(event.createdTime) >= since) this.squareJoined(event);
++      }
++      if (typeof response.syncToken === "string" && response.syncToken) this.joinTokens.set(chatId, response.syncToken);
++      if (!response.events?.length || !response.continuationToken) break;
++      token = { syncToken: response.syncToken, continuationToken: response.continuationToken };
++    }
++  }
++
++  /** Reports a NOTIFIED_JOIN_SQUARE_CHAT once, whichever stream delivered it. */
++  private squareJoined(event: { type: unknown; createdTime?: unknown; payload?: { notifiedJoinSquareChat?: { squareChatMid?: unknown; joinedMember?: { squareMemberMid?: unknown; displayName?: unknown; profileImageObsHash?: unknown; role?: unknown } } } }): void {
++    const type = String(event.type);
++    if (type !== "NOTIFIED_JOIN_SQUARE_CHAT" && type !== "2") return;
++    const joined = event.payload?.notifiedJoinSquareChat;
++    const member = joined?.joinedMember;
++    if (typeof joined?.squareChatMid !== "string" || typeof member?.squareMemberMid !== "string" || !SQUARE_MEMBER_MID.test(member.squareMemberMid)) return;
++    const key = `${joined.squareChatMid} ${member.squareMemberMid} ${String(event.createdTime)}`;
++    if (this.joinsSeen.has(key)) return;
++    this.joinsSeen.add(key);
++    if (this.joinsSeen.size > MAX_SEEN_JOINS) this.joinsSeen.delete(this.joinsSeen.values().next().value!);
++    const name = typeof member.displayName === "string" ? member.displayName : "";
++    const hash = typeof member.profileImageObsHash === "string" ? member.profileImageObsHash : undefined;
++    if (name) this.rememberProfile(member.squareMemberMid, name, avatarMediaId("obs", hash), true, memberRole(member.role));
++    this.events.onMemberJoin(joined.squareChatMid, { userId: member.squareMemberMid, displayName: name });
+   }
+ 
+   /** The message's media is no longer fetchable through us, and the hub replaces what it shows. */
+@@ -420,11 +536,18 @@ export class EvexLineProvider implements LineProvider {
          signal: AbortSignal.timeout(STICKER_TIMEOUT_MS),
          redirect: "error",
        });
@@ -731,7 +837,7 @@ index 58f8902..7a3f03d 100644
        return { mime: "image/png", bytes };
      }
      return undefined;
-@@ -437,25 +463,40 @@ export class EvexLineProvider implements LineProvider {
+@@ -437,25 +560,40 @@ export class EvexLineProvider implements LineProvider {
    async fetchAvatar(host: AvatarHost, hash: string, full: boolean): Promise<MediaBytes | undefined> {
      const origin = host === "profile" ? "https://profile.line-scdn.net" : "https://obs.line-scdn.net";
      const response = await fetch(`${origin}/${hash}${full ? "" : "/preview"}`, { signal: AbortSignal.timeout(STICKER_TIMEOUT_MS), redirect: "error" });
@@ -782,7 +888,7 @@ index 58f8902..7a3f03d 100644
        return { mime, bytes };
      }
      return undefined;
-@@ -467,10 +508,13 @@ export class EvexLineProvider implements LineProvider {
+@@ -467,10 +605,13 @@ export class EvexLineProvider implements LineProvider {
        signal: AbortSignal.timeout(STICKER_TIMEOUT_MS),
        redirect: "error",
      });
@@ -800,7 +906,7 @@ index 58f8902..7a3f03d 100644
      return { mime: "image/png", bytes };
    }
  
-@@ -480,7 +524,18 @@ export class EvexLineProvider implements LineProvider {
+@@ -480,7 +621,18 @@ export class EvexLineProvider implements LineProvider {
     */
    async fetchStickerPackages(): Promise<StickerPackage[]> {
      const client = this.requireClient();
@@ -820,7 +926,7 @@ index 58f8902..7a3f03d 100644
      const result: unknown = await client.base.request.request(
        LINEStruct.getOwnedProductSummaries_args({ shopId: "stickershop", offset: 0, limit: 200, locale: { language: "zh", country: "TW" }, request: {} }),
        "getOwnedProductSummaries",
-@@ -488,6 +543,7 @@ export class EvexLineProvider implements LineProvider {
+@@ -488,6 +640,7 @@ export class EvexLineProvider implements LineProvider {
        true,
        "/TSHOP4",
      );
@@ -828,7 +934,7 @@ index 58f8902..7a3f03d 100644
      const owned = parseOwnedProducts(result);
      const packages: StickerPackage[] = [];
      for (let offset = 0; offset < owned.length; offset += PACK_META_CONCURRENCY) {
-@@ -497,9 +553,10 @@ export class EvexLineProvider implements LineProvider {
+@@ -497,9 +650,10 @@ export class EvexLineProvider implements LineProvider {
          if (stickerIds.length === 0) return undefined;
          return { packageId: product.packageId, name: meta?.name || product.name || `貼圖包 ${product.packageId}`, stickerIds, animated: meta?.animated ?? false };
        }));
@@ -840,7 +946,7 @@ index 58f8902..7a3f03d 100644
      return packages;
    }
  
-@@ -509,8 +566,23 @@ export class EvexLineProvider implements LineProvider {
+@@ -509,8 +663,23 @@ export class EvexLineProvider implements LineProvider {
          signal: AbortSignal.timeout(STICKER_TIMEOUT_MS),
          redirect: "error",
        });
@@ -866,7 +972,7 @@ index 58f8902..7a3f03d 100644
        return text.length > 1_000_000 ? undefined : parsePackageMeta(JSON.parse(text));
      } catch {
        // The id ranges from the product list still give a usable (if untitled) package.
-@@ -564,18 +636,9 @@ export class EvexLineProvider implements LineProvider {
+@@ -564,18 +733,9 @@ export class EvexLineProvider implements LineProvider {
      return bytes && bytes.length > 0 && bytes.length <= this.downloadMaxBytes ? bytes : undefined;
    }
  
@@ -888,7 +994,7 @@ index 58f8902..7a3f03d 100644
        await response.body?.cancel();
        return undefined;
      }
-@@ -584,13 +647,30 @@ export class EvexLineProvider implements LineProvider {
+@@ -584,13 +744,30 @@ export class EvexLineProvider implements LineProvider {
      let total = 0;
      for (let part = await reader.read(); !part.done; part = await reader.read()) {
        total += part.value.length;
@@ -921,7 +1027,7 @@ index 58f8902..7a3f03d 100644
    }
  
    async fetchReadPositions(channel: ChannelRef): Promise<ReadPosition[]> {
-@@ -615,11 +695,19 @@ export class EvexLineProvider implements LineProvider {
+@@ -615,11 +792,19 @@ export class EvexLineProvider implements LineProvider {
     * the generic member name until the retry delay passes.
     */
    private async resolveMembers(client: Client, source: "talk" | "square", mids: Iterable<string>): Promise<void> {
@@ -946,7 +1052,7 @@ index 58f8902..7a3f03d 100644
      if (pending.length === 0) return;
      const timeout = Promise.withResolvers<void>();
      const timer = setTimeout(timeout.resolve, LOOKUP_TIMEOUT_MS);
-@@ -628,46 +716,131 @@ export class EvexLineProvider implements LineProvider {
+@@ -628,46 +813,131 @@ export class EvexLineProvider implements LineProvider {
      } finally {
        clearTimeout(timer);
      }
@@ -980,14 +1086,14 @@ index 58f8902..7a3f03d 100644
 +        const pending = this.contactLookups.get(mid);
 +        if (pending) waiting.add(pending);
 +        else batch.push(mid);
-       }
++      }
 +      if (batch.length > 0) {
 +        const pending = this.loadContacts(client, batch).finally(() => {
 +          for (const mid of batch) if (this.contactLookups.get(mid) === pending) this.contactLookups.delete(mid);
 +        });
 +        for (const mid of batch) this.contactLookups.set(mid, pending);
 +        waiting.add(pending);
-+      }
+       }
 +      await Promise.all(waiting);
 +    }
 +  }
@@ -1094,7 +1200,7 @@ index 58f8902..7a3f03d 100644
    async fetchHistory(channel: ChannelRef, limit: number, before?: string): Promise<HistoryPage> {
      const client = this.requireClient();
      return channel.kind === "square"
-@@ -717,9 +890,17 @@ export class EvexLineProvider implements LineProvider {
+@@ -717,9 +987,17 @@ export class EvexLineProvider implements LineProvider {
      let end = all.length;
      if (before !== undefined) {
        const match = /^(\d+):(\d{1,24})$/.exec(before);
@@ -1115,7 +1221,7 @@ index 58f8902..7a3f03d 100644
      }
      const start = Math.max(0, end - limit);
      const messages = all.slice(start, end);
-@@ -735,8 +916,8 @@ export class EvexLineProvider implements LineProvider {
+@@ -735,8 +1013,8 @@ export class EvexLineProvider implements LineProvider {
    private async loadSquareMessages(client: Client, squareChatMid: string): Promise<Message[]> {
      const cached = this.squareCache.get(squareChatMid);
      if (cached?.loading) return cached.loading;
@@ -1126,7 +1232,7 @@ index 58f8902..7a3f03d 100644
      // Take-backs are permanent; reaction snapshots are not. Only events arriving during this
      // walk override its history statuses, otherwise an expired live snapshot would win forever.
      if (cached) for (const [id, update] of cached.updates) {
-@@ -801,7 +982,7 @@ export class EvexLineProvider implements LineProvider {
+@@ -801,7 +1079,7 @@ export class EvexLineProvider implements LineProvider {
      entry.messages.sort((a, b) => this.compareSquareMessages(a, b));
      for (const [id, update] of entry.updates) this.applySquareUpdate(entry, id, update);
      this.boundSquareHistory(entry);
@@ -1135,7 +1241,7 @@ index 58f8902..7a3f03d 100644
      return entry.messages;
    }
  
-@@ -850,10 +1031,14 @@ export class EvexLineProvider implements LineProvider {
+@@ -850,10 +1128,14 @@ export class EvexLineProvider implements LineProvider {
    private rememberSquareMessage(message: Message): void {
      const cached = this.squareCache.get(message.channelId);
      if (!cached) return;
@@ -1154,7 +1260,7 @@ index 58f8902..7a3f03d 100644
      const origin = this.mediaOrigins.get(message.messageId);
      if (origin?.square) cached.origins.set(message.messageId, origin.raw);
      const update = cached.updates.get(message.messageId);
-@@ -992,6 +1177,7 @@ export class EvexLineProvider implements LineProvider {
+@@ -992,6 +1274,7 @@ export class EvexLineProvider implements LineProvider {
    // LINE rejects above 100 mids ("max_size":100). Page it here instead.
    private async fetchFriends(client: Client): Promise<Channel[]> {
      const { userFriendMids } = await client.base.relation.getUserFriendIds({ request: { blockStatus: "ALL" } });
@@ -1162,7 +1268,7 @@ index 58f8902..7a3f03d 100644
      const batches: string[][] = [];
      for (let offset = 0; offset < (userFriendMids?.length ?? 0); offset += FRIEND_BATCH) batches.push(userFriendMids.slice(offset, offset + FRIEND_BATCH));
      const friends: Channel[] = [];
-@@ -999,6 +1185,7 @@ export class EvexLineProvider implements LineProvider {
+@@ -999,6 +1282,7 @@ export class EvexLineProvider implements LineProvider {
      // and LINE is not hit with every batch at once.
      for (let wave = 0; wave < batches.length; wave += FRIEND_BATCH_CONCURRENCY) {
        const answers = await Promise.all(batches.slice(wave, wave + FRIEND_BATCH_CONCURRENCY).map((mids) => client.base.relation.getContactsV3({ mids })));
@@ -1170,7 +1276,7 @@ index 58f8902..7a3f03d 100644
        for (const { responses } of answers) {
          for (const contact of responses) {
            const name = contact.friendDetail?.user?.overriddenName || contact.targetProfileDetail?.profileName || UNKNOWN_MEMBER;
-@@ -1017,7 +1204,9 @@ export class EvexLineProvider implements LineProvider {
+@@ -1017,7 +1301,9 @@ export class EvexLineProvider implements LineProvider {
      // Square access is optional (accounts without OpenChat must still list talk chats); all four start at once.
      const squaresLoading = Promise.allSettled([client.fetchJoinedSquares(), client.fetchJoinedSquareChats()]);
      const [chats, friends] = await Promise.all([client.fetchJoinedChats(), this.fetchFriends(client)]);
@@ -1180,7 +1286,7 @@ index 58f8902..7a3f03d 100644
      const channels: Channel[] = [...friends];
      for (const chat of chats) {
        const type = String(chat.raw.type);
-@@ -1047,6 +1236,7 @@ export class EvexLineProvider implements LineProvider {
+@@ -1047,6 +1333,7 @@ export class EvexLineProvider implements LineProvider {
        }
      }
      await this.attachSummaries(client, channels);
@@ -1188,7 +1294,7 @@ index 58f8902..7a3f03d 100644
      return channels;
    }
  
-@@ -1056,6 +1246,8 @@ export class EvexLineProvider implements LineProvider {
+@@ -1056,6 +1343,8 @@ export class EvexLineProvider implements LineProvider {
     * happened to receive. Best effort: without a summary the list simply shows no badge or preview.
     */
    private async attachSummaries(client: Client, channels: Channel[]): Promise<void> {
@@ -1197,7 +1303,7 @@ index 58f8902..7a3f03d 100644
      const counts = new Map<string, number>();
      const activeAt = new Map<string, number>();
      const talkLast = new Map<string, LineMessage>();
-@@ -1063,13 +1255,16 @@ export class EvexLineProvider implements LineProvider {
+@@ -1063,13 +1352,16 @@ export class EvexLineProvider implements LineProvider {
      try {
        const seen = new Set<string>();
        let minChatId: string | undefined;
@@ -1215,7 +1321,7 @@ index 58f8902..7a3f03d 100644
            counts.set(box.id, Number(box.unreadCount));
            const delivered = Number(box.lastDeliveredMessageId?.deliveredTime);
            if (Number.isFinite(delivered) && delivered > 0) activeAt.set(box.id, delivered);
-@@ -1082,6 +1277,7 @@ export class EvexLineProvider implements LineProvider {
+@@ -1082,6 +1374,7 @@ export class EvexLineProvider implements LineProvider {
      } catch {
        // Talk chats just show no badge or preview this time.
      }
@@ -1223,7 +1329,7 @@ index 58f8902..7a3f03d 100644
      const squares = channels.filter((channel) => channel.kind === "square");
      for (let offset = 0; offset < squares.length; offset += SQUARE_LOOKUP_CONCURRENCY) {
        await Promise.all(squares.slice(offset, offset + SQUARE_LOOKUP_CONCURRENCY).map(async (channel) => {
-@@ -1096,8 +1292,10 @@ export class EvexLineProvider implements LineProvider {
+@@ -1096,8 +1389,10 @@ export class EvexLineProvider implements LineProvider {
            // This OpenChat shows no badge or preview this time.
          }
        }));
@@ -1234,7 +1340,7 @@ index 58f8902..7a3f03d 100644
      for (const channel of channels) {
        const count = counts.get(channel.channelId);
        if (count && Number.isFinite(count) && count > 0) channel.unreadCount = Math.min(count, MAX_UNREAD_SHOWN);
-@@ -1125,7 +1323,9 @@ export class EvexLineProvider implements LineProvider {
+@@ -1125,7 +1420,9 @@ export class EvexLineProvider implements LineProvider {
      }
      for (const { raw, name } of squareLast.values()) if (name) this.rememberName(raw.message.from, name);
      await this.resolveMembers(client, "talk", [...decrypted.values()].flatMap((entry) => [entry.raw.from, ...chatEventMids(entry.raw.contentMetadata)]));
@@ -1244,9 +1350,17 @@ index 58f8902..7a3f03d 100644
      for (const [chatId, entry] of decrypted) {
        try {
          const message = this.talkToMessage(entry.raw, myMid, entry.undecryptable, true);
-@@ -1184,9 +1384,13 @@ export class EvexLineProvider implements LineProvider {
+@@ -1183,10 +1480,21 @@ export class EvexLineProvider implements LineProvider {
+     this.base = undefined;
      this.client = undefined;
      this.profiles.clear();
++    clearInterval(this.joinTimer);
++    this.joinTimer = undefined;
++    this.joinTokens.clear();
++    this.joinSyncs.clear();
++    this.joinAgain.clear();
++    this.joinsSeen.clear();
++    this.memberCounts.clear();
      this.lookupMisses.clear();
 +    this.contactLookups.clear();
 +    this.squareMemberLookups.clear();
@@ -1283,14 +1397,17 @@ index 9bdb650..ae6e657 100644
    if (stickerIds.length === 0) return undefined;
    const titles = asRecord(info.title);
 diff --git a/src/main.ts b/src/main.ts
-index 38f5788..3893f44 100644
+index 38f5788..72bed54 100644
 --- a/src/main.ts
 +++ b/src/main.ts
-@@ -31,6 +31,7 @@ async function main(): Promise<void> {
+@@ -31,6 +31,10 @@ async function main(): Promise<void> {
      onChecked: (chatId) => hub.handleChecked(chatId),
      onChatsChanged: () => hub.handleChatsChanged(),
      onReactions: (chatId, messageId, reactions) => hub.handleReactions(chatId, messageId, reactions),
-+    onMemberJoin: (chatId, member) => hub.handleMemberJoin(chatId, member),
++    onMemberJoin: (chatId, member) => {
++      console.info(`LINE 社群新成員：chat=${chatId} member=${member.userId}`);
++      hub.handleMemberJoin(chatId, member);
++    },
      onStatus: (state) => {
        console.info(`LINE 狀態：${state}`);
        hub.setStatus(state);
@@ -1339,7 +1456,7 @@ index 9307238..a67a356 100644
  export interface Mention {
    userId: string;
 diff --git a/src/ws/hub.ts b/src/ws/hub.ts
-index 4ae6a53..028bed4 100644
+index 4ae6a53..e6720e6 100644
 --- a/src/ws/hub.ts
 +++ b/src/ws/hub.ts
 @@ -12,7 +12,7 @@ import type { Channel, ChannelKind, Message, Reactions, ReadPosition } from "../
@@ -1380,7 +1497,12 @@ index 4ae6a53..028bed4 100644
  } as const;
  
  function updateFrame(info: UpdateInfo): ServerFrame {
-@@ -96,6 +104,7 @@ export function createHub(options: HubOptions): Hub {
+@@ -93,9 +101,12 @@ export function createHub(options: HubOptions): Hub {
+   const wss = new WebSocketServer({ noServer: true, maxPayload: config.limits.frameMaxBytes });
+   const botWss = new WebSocketServer({ noServer: true, maxPayload: config.limits.frameMaxBytes });
+   const botScope: ReadonlySet<string> = new Set(config.api.chats);
++  // Joins are only ever reported to bots, so only their chats' event streams are followed.
++  if (config.api.enabled) provider.watchSquareJoins(botScope);
    const botSendLimiter = new SlidingWindowLimiter(config.api.sendsPerMinute, 60_000);
    // Shared by every bot connection: several connections must not multiply the paid TypeSafe calls.
    const botScamLimiter = new SlidingWindowLimiter(SCAM_CHECKS_PER_MINUTE, 60_000);
@@ -1388,7 +1510,7 @@ index 4ae6a53..028bed4 100644
    let status: ListenState = "starting";
    let refreshing: Promise<void> | undefined;
    // State can become ready again before an old LINE request settles; "ready" alone is not an account boundary.
-@@ -103,16 +112,22 @@ export function createHub(options: HubOptions): Hub {
+@@ -103,16 +114,22 @@ export function createHub(options: HubOptions): Hub {
    let update: UpdateInfo | undefined;
    let refreshTimer: NodeJS.Timeout | undefined;
    let listChangeTimer: NodeJS.Timeout | undefined;
@@ -1414,7 +1536,7 @@ index 4ae6a53..028bed4 100644
    // Sockets that answered the last ping (browsers and the ws client both reply to pings on their own).
    const alive = new WeakSet<WebSocket>();
    const timedOut = new WeakSet<WebSocket>();
-@@ -144,31 +159,38 @@ export function createHub(options: HubOptions): Hub {
+@@ -144,31 +161,38 @@ export function createHub(options: HubOptions): Hub {
    }
  
    function send(socket: WebSocket, frame: ServerFrame): void {
@@ -1463,7 +1585,7 @@ index 4ae6a53..028bed4 100644
    }
  
    function broadcastBots(frame: ServerFrame): void {
-@@ -176,13 +198,14 @@ export function createHub(options: HubOptions): Hub {
+@@ -176,13 +200,14 @@ export function createHub(options: HubOptions): Hub {
    }
  
    /** A bot sees only the chats listed in `api.chats`. */
@@ -1482,7 +1604,7 @@ index 4ae6a53..028bed4 100644
    }
  
    function apiState(): ServerFrame {
-@@ -263,21 +286,26 @@ export function createHub(options: HubOptions): Hub {
+@@ -263,21 +288,26 @@ export function createHub(options: HubOptions): Hub {
  
    async function sendReadSnapshot(socket: WebSocket, chatId: string, kind: ChannelKind): Promise<void> {
      const account = generation;
@@ -1514,7 +1636,7 @@ index 4ae6a53..028bed4 100644
      }
      await fetching;
      if (account !== generation) return;
-@@ -296,10 +324,11 @@ export function createHub(options: HubOptions): Hub {
+@@ -296,10 +326,11 @@ export function createHub(options: HubOptions): Hub {
      if (scope && request.kind !== "text") return fail(socket, "INVALID_REQUEST", request.requestId);
      const target = { channelId: request.chatId, kind: channel.kind };
      if (request.kind === "text") {
@@ -1528,7 +1650,7 @@ index 4ae6a53..028bed4 100644
            return fail(socket, "INVALID_REQUEST", request.requestId);
          }
        }
-@@ -377,6 +406,11 @@ export function createHub(options: HubOptions): Hub {
+@@ -377,6 +408,11 @@ export function createHub(options: HubOptions): Hub {
      }
    }
  
@@ -1540,7 +1662,7 @@ index 4ae6a53..028bed4 100644
    /**
     * The text sent to TypeSafe is the server's own copy of a message it has shown, from someone else:
     * a client cannot use this to send arbitrary text out, or to rate its own messages. Bots are also
-@@ -387,12 +421,32 @@ export function createHub(options: HubOptions): Hub {
+@@ -387,12 +423,32 @@ export function createHub(options: HubOptions): Hub {
      if (!parsed.ok) return fail(socket, "INVALID_REQUEST", parsed.requestId);
      const { requestId, chatId, messageId } = parsed.value;
      if (!scam) return fail(socket, "SCAM_CHECK_UNAVAILABLE", requestId);
@@ -1577,7 +1699,7 @@ index 4ae6a53..028bed4 100644
        const analysis = await scam.analyzeScam(message.text);
        if (account !== generation || login.state !== "ready") return;
        send(socket, { type: "scam:result", requestId, chatId, messageId, analysis });
-@@ -428,8 +482,8 @@ export function createHub(options: HubOptions): Hub {
+@@ -428,8 +484,8 @@ export function createHub(options: HubOptions): Hub {
      const placeholder = store.unsend(messageId, chatHint);
      if (!placeholder) return;
      const frame: ServerFrame = { type: "message:unsend", chatId: placeholder.channelId, messageId };
@@ -1588,7 +1710,7 @@ index 4ae6a53..028bed4 100644
      broadcastChannel(placeholder.channelId, placeholder.channelId === chatHint ? before : undefined);
    }
  
-@@ -443,8 +497,9 @@ export function createHub(options: HubOptions): Hub {
+@@ -443,8 +499,9 @@ export function createHub(options: HubOptions): Hub {
        clearTimeout(refreshTimer);
        refreshTimer = setTimeout(() => { void refreshChannels(); }, NEW_CHANNEL_REFRESH_MS);
      }
@@ -1600,7 +1722,7 @@ index 4ae6a53..028bed4 100644
      // The list entry follows: activity order and preview move with the newest message.
      if (before) broadcastChannel(message.channelId, before);
    }
-@@ -490,6 +545,60 @@ export function createHub(options: HubOptions): Hub {
+@@ -490,6 +547,60 @@ export function createHub(options: HubOptions): Hub {
      }
    }
  
@@ -1661,7 +1783,7 @@ index 4ae6a53..028bed4 100644
    /** Local only (no LINE request): the profile LINE gave at sign-in. */
    function handleProfile(socket: WebSocket, frame: Record<string, unknown>): void {
      const requestId = requestIdOf(frame);
-@@ -535,7 +644,7 @@ export function createHub(options: HubOptions): Hub {
+@@ -535,7 +646,7 @@ export function createHub(options: HubOptions): Hub {
        // Logged out or failed: nothing from the previous account may stay in memory or on screen.
        generation += 1;
        refreshing = undefined;
@@ -1670,7 +1792,7 @@ index 4ae6a53..028bed4 100644
        clearTimeout(refreshTimer);
        clearTimeout(listChangeTimer);
        store.clear();
-@@ -544,6 +653,9 @@ export function createHub(options: HubOptions): Hub {
+@@ -544,6 +655,9 @@ export function createHub(options: HubOptions): Hub {
        seenReads.clear();
        readFetches.clear();
        ownSquareSenders.clear();
@@ -1680,7 +1802,7 @@ index 4ae6a53..028bed4 100644
        status = "starting";
      }
      broadcastAll({ type: "auth:state", state });
-@@ -579,7 +691,7 @@ export function createHub(options: HubOptions): Hub {
+@@ -579,7 +693,7 @@ export function createHub(options: HubOptions): Hub {
      watch(socket, "bot");
      const sendLimiter = new SlidingWindowLimiter(config.limits.sendsPerSecond, 1000);
      const historyLimiter = new SlidingWindowLimiter(HISTORY_PER_SECOND, 1000);
@@ -1689,7 +1811,7 @@ index 4ae6a53..028bed4 100644
      send(socket, { type: "auth:state", state: login.state });
      send(socket, { type: "status", state: status });
      if (login.state === "ready") {
-@@ -607,6 +719,15 @@ export function createHub(options: HubOptions): Hub {
+@@ -607,6 +721,15 @@ export function createHub(options: HubOptions): Hub {
            if (!botScamLimiter.allow()) fail(socket, "RATE_LIMITED", requestIdOf(frame as Record<string, unknown>));
            else void handleScamCheck(socket, frame as Record<string, unknown>, botScope);
            return;
@@ -1705,7 +1827,7 @@ index 4ae6a53..028bed4 100644
          case "profile:get":
            if (!historyLimiter.allow()) fail(socket, "RATE_LIMITED", requestIdOf(frame as Record<string, unknown>));
            else handleProfile(socket, frame as Record<string, unknown>);
-@@ -719,6 +840,15 @@ export function createHub(options: HubOptions): Hub {
+@@ -719,6 +842,15 @@ export function createHub(options: HubOptions): Hub {
      handleReactions(chatId, messageId, reactions) {
        if (login.state === "ready") updateReactions(chatId, messageId, reactions);
      },
@@ -1721,7 +1843,7 @@ index 4ae6a53..028bed4 100644
      handleChecked(chatId) {
        const before = store.channelOf(chatId);
        if (!before || login.state !== "ready") return;
-@@ -729,9 +859,9 @@ export function createHub(options: HubOptions): Hub {
+@@ -729,9 +861,9 @@ export function createHub(options: HubOptions): Hub {
      handleChatsChanged() {
        if (login.state !== "ready") return;
        clearTimeout(listChangeTimer);
@@ -1801,7 +1923,7 @@ index 31fd7a2..6a7f22e 100644
    const base = header(frame);
    if (!base) return { ok: false, ...(requestIdOf(frame) ? { requestId: requestIdOf(frame)! } : {}) };
 diff --git a/test/hub.test.mjs b/test/hub.test.mjs
-index e3ebc41..b34a548 100644
+index e3ebc41..8617f26 100644
 --- a/test/hub.test.mjs
 +++ b/test/hub.test.mjs
 @@ -5,6 +5,7 @@ import { createServer } from "node:net";
@@ -1812,7 +1934,16 @@ index e3ebc41..b34a548 100644
  import { createWebServer } from "../dist/http/server.js";
  import { createHub } from "../dist/ws/hub.js";
  import { ApiTokenStore } from "../dist/http/apiToken.js";
-@@ -346,6 +347,107 @@ test("media route serves stickers only to the browser that holds the cookie and
+@@ -26,6 +27,8 @@ class FakeProvider {
+   loginQR(callbacks) { this.callbacks = callbacks; return new Promise((resolve) => { this.finish = resolve; }); }
+   getProfile() { return { userId: "u-me", displayName: "測試帳號" }; }
+   async fetchChannels() { return this.channels; }
++  watched = [];
++  watchSquareJoins(chatIds) { this.watched.push([...chatIds]); }
+   logoutResult = { remoteRevoked: true };
+   logoutError = undefined;
+   async logout() { if (this.logoutError) throw this.logoutError; return this.logoutResult; }
+@@ -346,6 +349,107 @@ test("media route serves stickers only to the browser that holds the cookie and
    assert.equal((await fetch(`${base}sticker-123`, { method: "POST", headers: { Cookie: cookie } })).status, 405);
  });
  
@@ -1920,7 +2051,7 @@ index e3ebc41..b34a548 100644
  async function signedIn(t, options) {
    const env = await start(t, options);
    await env.login.restore();
-@@ -651,6 +753,107 @@ test("opening the same chat again right away shares one LINE read-range lookup",
+@@ -651,6 +755,107 @@ test("opening the same chat again right away shares one LINE read-range lookup",
    assert.equal(env.provider.calls.filter(([kind]) => kind === "read-range").length, 1);
  });
  
@@ -2028,7 +2159,7 @@ index e3ebc41..b34a548 100644
  test("live read events reach the browser only for chats the account has", async (t) => {
    const env = await signedIn(t);
    env.hub.handleRead(`c${"b".repeat(32)}`, { readerId: "u1", messageId: "5" });
-@@ -920,6 +1123,38 @@ test("read positions seen live are replayed on the next open, merged with LINE's
+@@ -920,6 +1125,38 @@ test("read positions seen live are replayed on the next open, merged with LINE's
    await env.client.until(() => env.client.frames.filter((frame) => frame.type === "read" && frame.positions.length === 3).length === 2);
  });
  
@@ -2067,7 +2198,7 @@ index e3ebc41..b34a548 100644
  test("an open chat is reported read once per position, only for messages the server has shown", async (t) => {
    const env = await signedIn(t);
    env.provider.history = { messages: [older("1001", 10), older("1002", 20), older("1003", 30)], hasMore: false };
-@@ -1121,23 +1356,88 @@ test("group and profile changes refresh the list once per burst, and at most onc
+@@ -1121,23 +1358,88 @@ test("group and profile changes refresh the list once per burst, and at most onc
    const settle = async () => { for (let i = 0; i < 5; i += 1) await Promise.resolve(); };
    await settle();
    t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 1_000_000 });
@@ -2160,7 +2291,7 @@ index e3ebc41..b34a548 100644
  test("a newer release is announced to every client, including ones that connect later and are not signed in", async (t) => {
    const { port, cookie, hub } = await start(t, { restore: false });
    const headers = { Origin: `http://127.0.0.1:${port}`, Cookie: cookie };
-@@ -1571,3 +1871,449 @@ test("a connection that stops answering pings is closed by the next heartbeat; o
+@@ -1571,3 +1873,449 @@ test("a connection that stops answering pings is closed by the next heartbeat; o
    assert.equal(healthy.socket.readyState, WebSocket.OPEN);
    assert.equal(pings, 2);
  });
@@ -2677,7 +2808,7 @@ index 3137b0f..89d18f0 100644
 +  assert.equal(media.getUpload(id), undefined);
 +});
 diff --git a/test/provider.test.mjs b/test/provider.test.mjs
-index 3dae4b2..7328652 100644
+index 3dae4b2..8517d75 100644
 --- a/test/provider.test.mjs
 +++ b/test/provider.test.mjs
 @@ -17,6 +17,8 @@ function fakeBase(overrides = {}) {
@@ -3935,7 +4066,7 @@ index 3dae4b2..7328652 100644
    refreshed = true;
    const refreshing = provider.fetchHistory(channel, 50);
    emit("square:event", squareStatus(2, { 1: 0, 2: {} }));
-@@ -650,3 +1780,106 @@ test("OpenChat TTL refresh replaces old live reactions with current history whil
+@@ -650,3 +1780,148 @@ test("OpenChat TTL refresh replaces old live reactions with current history whil
    assert.deepEqual(page.messages[0].reactions, { counts: { LOVE: 3 } }, "history replaces reactions from before this refresh");
    assert.equal(page.messages[1].reactions, undefined, "live removal during refresh still overrides the walked snapshot");
  });
@@ -4022,8 +4153,8 @@ index 3dae4b2..7328652 100644
 +  const base = fakeBase({ square: { async getSquareMember({ squareMemberMid }) { lookups.push(squareMemberMid); return { squareMember: { displayName: "群管", profileImageObsHash: hash } }; } } });
 +  const { provider, joins, emit } = await activeProvider(base);
 +  const member = (fields) => ({ squareChatMid: SQUARE, joinedMember: { squareMemberMid: joiner, squareMid: "s1", displayName: "管理員Amy", profileImageObsHash: "0hOLD", membershipState: "JOINED", role: "MEMBER", ...fields } });
-+  emit("square:event", { type: "NOTIFIED_JOIN_SQUARE_CHAT", payload: { notifiedJoinSquareChat: member() } });
-+  emit("square:event", { type: 2, payload: { notifiedJoinSquareChat: member({ displayName: undefined }) } });
++  emit("square:event", { type: "NOTIFIED_JOIN_SQUARE_CHAT", createdTime: "1", payload: { notifiedJoinSquareChat: member() } });
++  emit("square:event", { type: 2, createdTime: "2", payload: { notifiedJoinSquareChat: member({ displayName: undefined }) } });
 +  emit("square:event", { type: 2, payload: { notifiedJoinSquareChat: member({ squareMemberMid: "../x" }) } });
 +  emit("square:event", { type: 2, payload: {} });
 +  assert.deepEqual(joins, [[SQUARE, { userId: joiner, displayName: "管理員Amy" }], [SQUARE, { userId: joiner, displayName: "" }]]);
@@ -4040,6 +4171,48 @@ index 3dae4b2..7328652 100644
 +  assert.equal(await provider.fetchSquareMemberPicture(joiner), undefined);
 +  assert.deepEqual(lookups, [joiner, joiner]);
 +  assert.equal(fetched.length, 1);
++  await provider.close();
++});
++
++test("joins are read from followed chats' own event streams: hints and polls continue from the last position", async () => {
++  const joiner = (n) => `p${String(n).repeat(32)}`;
++  const joinEvent = (n, createdTime, name = "群管") => ({ type: "NOTIFIED_JOIN_SQUARE_CHAT", createdTime: String(createdTime), payload: { notifiedJoinSquareChat: { squareChatMid: SQUARE, joinedMember: { squareMemberMid: joiner(n), displayName: name } } } });
++  const now = Date.now();
++  const requests = [];
++  let next = [];
++  const base = fakeBase({ square: { async fetchSquareChatEvents(request) {
++    requests.push(request);
++    // First read: an old join that predates the service, then a recent one, across two pages.
++    if (!request.syncToken) return { events: [joinEvent(1, now - 60 * 60_000)], syncToken: "t1", continuationToken: "c1" };
++    if (request.continuationToken) return { events: [joinEvent(2, now - 1000)], syncToken: "t2" };
++    const events = next; next = [];
++    return { events, syncToken: `t${requests.length + 1}` };
++  } } });
++  const { provider, joins, emit } = await activeProvider(base);
++  provider.watchSquareJoins([SQUARE, GROUP_A]);
++  await settle();
++  assert.deepEqual(joins.map(([, member]) => member.userId), [joiner(2)], "only the recent join counts on the first read; talk chats are not followed");
++  assert.deepEqual(requests.map((r) => r.squareChatMid), [SQUARE, SQUARE]);
++
++  next = [joinEvent(3, now)];
++  emit("square:event", { type: 42, payload: { notificationNewChatMember: { squareChatMid: SQUARE, squareChatName: "社群" } } });
++  await settle();
++  assert.equal(requests.at(-1).syncToken, "t2", "an incremental read continues from the stored position");
++  // The same join delivered directly is not reported twice.
++  emit("square:event", joinEvent(3, now));
++  assert.deepEqual(joins.map(([, member]) => member.userId), [joiner(2), joiner(3)]);
++
++  next = [joinEvent(4, now)];
++  const status = (memberCount) => ({ type: 13, payload: { notifiedUpdateSquareChatStatus: { squareChatMid: SQUARE, statusWithoutMessage: { memberCount } } } });
++  emit("square:event", status(10));
++  await settle();
++  assert.equal(joins.length, 2, "the first member count only sets the baseline");
++  emit("square:event", status(10));
++  await settle();
++  assert.equal(joins.length, 2, "an unchanged count does not read the chat");
++  emit("square:event", status(11));
++  await settle();
++  assert.equal(joins.at(-1)[1].userId, joiner(4));
 +  await provider.close();
 +});
 diff --git a/test/requests.test.mjs b/test/requests.test.mjs
