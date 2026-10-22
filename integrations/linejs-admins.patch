@@ -1,8 +1,8 @@
 diff --git a/AGENTS.md b/AGENTS.md
-index 59cf16e..6cfe74d 100644
+index 59cf16e..ad7b39f 100644
 --- a/AGENTS.md
 +++ b/AGENTS.md
-@@ -62,14 +62,22 @@ Gate 依 [PLAN.md](PLAN.md) 逐關驗收，不跳關；Gate 0 遠端需存在四
+@@ -62,14 +62,23 @@ Gate 依 [PLAN.md](PLAN.md) 逐關驗收，不跳關；Gate 0 遠端需存在四
  2. QR URL 與 PIN **一次性顯示、不入日誌、不落盤**。
  3. `session.json` 含憑證與 E2EE key material：chmod **600**、列入 `.gitignore`、不入日誌、不分享。
  4. 網頁 WS 升級須 `Origin`（`http`／`https`，後者供 TLS 反向代理／自訂網域）的主機部分等於 `Host` 標頭並帶瀏覽器 cookie；其餘來源拒絕升級。
@@ -22,13 +22,14 @@ index 59cf16e..6cfe74d 100644
 +14. 管理員標記：同一機器人連線最後發起且成功完成的 `chat:admins:get` 查證名單，可用 `message:send.mentions` 標記尚未發言者；僅限該聊天室。新查詢開始即撤銷舊名單及尚未完成的舊查詢授權資格，舊成功結果回 `CHAT_ADMINS_FAILED`，不得在新查詢等待中、成功或失敗後恢復授權。登出／換帳號清空全部授權。不得放行任意 ID、跨聊天室或其他連線的名單。網頁仍只允許已知發言者。
 +15. WebSocket 操作與 HTTP 上傳的滑動窗口限流使用單調時鐘 `performance.now()`；不得以系統時間校正提早恢復配額或延長限制。既有配額、窗口長度及每連線／全域共用範圍不變。頻道異動的三十秒刷新間隔亦使用單調時間，保留三秒合併；首次異動不得因程序剛啟動而多等，登出取消排程並重設間隔。
 +16. 成員顯示資料查詢、失敗退避與訊息傳遞佇列屬於當前登入工作階段。登出作廢舊佇列，舊查詢不得啟動後續批次或寫入新帳號的重試狀態，新帳號訊息不得等待舊查詢。已送出的外部要求可能仍會完成，但結果不得跨帳號生效。既有五分鐘失敗退避使用單調時間，校時不得提前解除或延長等待；只在後續有需求時重試。同一 OpenChat 成員及 talk 聯絡人批次中重疊的 ID 共用尚未完成的顯示資料查詢；talk 只傳送新 ID，保留每批百人上限，OpenChat 後續批次略過等待期間已取得的資料。各呼叫仍最多等候五秒。完成／失敗回收共用關聯，登出清空，舊結果不得移除新登入的查詢，不影響管理員授權查證。頻道清單亦須在非同步階段確認登入歸屬，失效後不得續取好友批次、訊息匣或 OpenChat 摘要，或以舊資料填入新帳號的暱稱與預覽；當前帳號的摘要失敗降級維持不變。
++17. 新成員冒充檢查（小語裁示）：`member:join` 只送機器人、只限 `api.chats` 內已知 OpenChat、不含本帳號成員。`avatar:check` 只可查本次登入通知過的加入者（最多 500 筆，登出清空），不接受用戶端提供的圖片或任意成員；伺服器重新查詢目前大頭貼，只送 PNG／JPEG 至 TypeSafe（必帶 `TypeSafe-Danger-Zone-Images: true`、每次新 UUID 參照、拒絕重新導向），與 `scam:check` 共用機器人付費額度，回應 fail-closed，日誌只記 `AVATAR_CHECK_FAILED`。
 +
 +`scam:check` 的本地訊息資格檢查必須先於成員查詢，避免不存在或不可分析的訊息觸發 LINE 請求；未知自己身分的查詢完成後必須重讀並重新驗證訊息，不能分析等待前的舊快照。
 +同一登入工作階段、同一聊天室的並行分析僅共用尚未完成的自己身分查詢；完成／失敗回收，登出清空，舊查詢不能填入或刪除新工作階段的查詢狀態。不共用管理員授權或明確的 `chat:admins:get` 查詢，不自動重試，不合併付費分析或其限額。
  
  內部日誌也不得包含憑證、token、QR URL、PIN 或 key material；不得直接 dump 套件錯誤物件、session 或登入 payload。圖片／貼圖／影片／語音位元組一律走 HTTP，WS 不傳位元組；收到的檔案只以 `file-<id>` 附件下載（`Content-Disposition: attachment`、`application/octet-stream`，不嗅探、不內嵌），規則同收到的媒體。訊息不落盤；每頻道最多 500 則，同 messageId 去重，編輯覆寫快取。LINE listen 失效採退避重啟；QR 失敗不自動循環，須由使用者動作重新產生。
  
-@@ -77,6 +85,8 @@ Gate 依 [PLAN.md](PLAN.md) 逐關驗收，不跳關；Gate 0 遠端需存在四
+@@ -77,6 +86,8 @@ Gate 依 [PLAN.md](PLAN.md) 逐關驗收，不跳關；Gate 0 遠端需存在四
  
  其他 adapter 注意事項：OpenChat 歷史無「最新 N 則」查詢，只能由最舊事件向前走完再於記憶體分頁（快取 10 分鐘，期間以即時訊息與自己送出的訊息補上；LINE 監聽出錯即整個捨棄）；talk 歷史游標為 `deliveredTime:messageId` 且上界含端點，需多取一則並剔除錨點；非好友的群組成員名稱與大頭照以 `getContactsV2`／`getSquareMember` 補查（限時、限量、失敗退避），社群管理員角色同樣來自 `getSquareMember`；他人已讀位置來自 `getMessageReadRange` 與 `NOTIFIED_READ_MESSAGE`。**回報自己的已讀**（`sendChatChecked`／OpenChat `markAsRead`）會改變真實帳號狀態（對方看到「已讀」），因此只在小語要求下啟用：由網頁在聊天開啟且頁面可見時送 `chat:read`，伺服器只接受已顯示過的訊息、每個位置只送一次，並可用 `chat.sendReadReceipts: false` 關閉；驗證時不得對真實聯絡人的聊天室測試。已擁有貼圖包來自商店服務 `getOwnedProductSummaries`（linejs 3.4.2 未接線，經 `base.request.request` 呼叫 `/TSHOP4`），貼圖 id 與標題來自公開 CDN 的 `productInfo.meta`，失敗時退回 LINE 回傳的 id 區間。即時事件依聊天室各自排序處理：一個聊天室的成員查詢變慢不會拖住其他聊天室；好友資料以每批 100 人、最多 3 批同時查詢。
  
@@ -38,10 +39,10 @@ index 59cf16e..6cfe74d 100644
  
  LINE operation 與連線注意事項：linejs 未記載多數 operation 的參數排列，`SEND_CHAT_CHECKED`（手機已讀）只取 `param1` 且須為伺服器已知聊天室；群組／個人資料／聊天室成員變動不解析參數，只觸發節流的頻道清單重新整理（3 秒合併、最多每 30 秒一次），不得改成依參數猜測內容。頻道清單的最後一則訊息（`Channel.lastMessage`）是預覽，不登記媒體來源，不能藉此下載。WS 心跳：伺服器以協定層 Ping 每 30 秒檢查、兩輪無回應即關閉；網頁 `ping` 需 10 秒內收到 `pong`，回到前景立即探測。斷線記錄（網頁主控台、服務日誌 `WS_CLOSED`）只可含時間、close code、截短的 reason 與前後景狀態，不得含標頭、cookie 或 Token。
 diff --git a/PLAN.md b/PLAN.md
-index 49acd5b..2764237 100644
+index 49acd5b..580b4ea 100644
 --- a/PLAN.md
 +++ b/PLAN.md
-@@ -144,23 +144,78 @@
+@@ -144,23 +144,80 @@
  
  > 實作補完（協定版本仍為 2）：登出／換帳號以 session generation 作廢歷史、發送、回應、收回、已讀與頻道查詢的舊結果；歷史重新載入也同步清除已取消的回應。OpenChat 歷史採同聊天室 single-flight、時間＋訊息 id 錨點，快取最多 5 個聊天室各 5000 則、10 分鐘，合併即時訊息與狀態，過期時重新取得回應，僅已提供頁面的訊息授權媒體。網頁搜尋維持即時更新並跨聊天室依時間排序；初次歷史失敗可重試，回應更新不重建媒體 DOM，登出清除搜尋、私人畫面與通知。隔離測試與無頭靜音瀏覽器已驗證；尚未對本次變動重新進行真實 LINE Gate 驗收。
  
@@ -105,6 +106,8 @@ index 49acd5b..2764237 100644
 +> 清單快照：每次聊天室清單廣播只建立一份排序快照，網頁使用完整名單，機器人另依 `api.chats` 篩選；連線初始化仍從當下快取產生名單，不保留跨刷新快照。
 +> 限流時鐘：WebSocket 操作與 HTTP 上傳的滑動窗口均使用單調經過時間；系統校時不能提早恢復配額或延長限制，既有額度、窗口長度與共用範圍不變。
 +
++> 新成員冒充檢查（小語裁示，協定版本仍為 2）：`hello.capabilities` 加入 `"member:join"`。LINE `NOTIFIED_JOIN_SQUARE_CHAT`（2）解析 `joinedMember`，僅對 `api.chats` 內已知 OpenChat、非本帳號成員送機器人 `member:join { chatId, member: { userId, displayName } }`（名稱缺漏為空字串，不送網頁）。機器人 `avatar:check { requestId, chatId, memberId }` 只接受本次登入通知過的加入者（最近 500 筆），以 `getSquareMember` 取得目前 `profileImageObsHash`、從 obs CDN 取小圖，僅 PNG／JPEG 以 `assets`（每次新 UUID）與 `TypeSafe-Danger-Zone-Images: true` 送 Jev noul 題問是否有皇冠；回 `avatar:result { requestId, chatId, memberId, analysis?: { probability } }`（無大頭貼不含 analysis），失敗 `AVATAR_CHECK_FAILED`，未設金鑰 `AVATAR_CHECK_UNAVAILABLE`，與 `scam:check` 共用機器人每分鐘 10 次。TypeSafe 圖片功能屬實驗性（Dreamer-ready）；尚未以真實帳號與有效金鑰實測。
++
  ### Server → Client
  
  | type | 負載 |
@@ -121,25 +124,26 @@ index 49acd5b..2764237 100644
  | `channels` | `{ channels: Channel[] }`（snapshot，連線即送、變動重送） |
  | `messages` | `{ chatId, messages: Message[] }`（連線時快照，每個聊天室一個影格；舊訊息，不計未讀） |
  | `message` | `{ message: Message }`（即時新訊息） |
-@@ -190,6 +245,7 @@
+@@ -190,6 +247,8 @@
  | `message:react` | `{ requestId, chatId, messageId, reaction: "NICE"｜"LOVE"｜"FUN"｜"AMAZING"｜"SAD"｜"OMG"｜null }`（僅網頁，與 `message:send` 共用頻率上限） |
  | `scam:check` | `{ requestId, chatId, messageId }`（網頁每連線每分鐘 10 次；機器人限 `api.chats`、所有機器人合計每分鐘 10 次；只接受別人傳來、已顯示、未收回的文字訊息） |
  | `profile:get` | `{ requestId }`（自己的 `profile`；網頁與機器人皆可，不呼叫 LINE） |
 +| `chat:admins:get` | `{ requestId, chatId }`（只限機器人、`api.chats` 內已知 OpenChat；合計每分鐘 10 次） |
++| `avatar:check` | `{ requestId, chatId, memberId }`（只限機器人、`member:join` 通知過的 OpenChat 加入者；與 `scam:check` 共用每分鐘 10 次） |
  | `channels:refresh` | `{}` |
  | `api:token:create` / `api:token:revoke` | `{}`（產生或撤銷機器人 Token，並中斷所有機器人連線） |
  | `ping` | `{}` |
-@@ -197,7 +253,7 @@
+@@ -197,7 +256,7 @@
  ### 機器人 API（`/api/ws`）
  - 升級條件：`api.enabled`、**無 `Origin`**、`Authorization: Bearer linejs_…` 符合目前 Token；否則 403（同時超過 4 個連線回 429）。`Host` 不限制（同網頁）。
  - 連線時收到 `hello`、`auth:state`、`status`、`auth:ready`、僅含 `api.chats` 的 `channels`；之後只有這些聊天室的 `message`／`message:edit`。不重播、不給 `read`／`update:available`／`api:state`。
 -- 可送：`message:send`（`requestId`、`chatId`、`text`、可選 `mentions`／`replyTo`；`mediaId`／`sticker` 回 `INVALID_REQUEST`）、`history:fetch`、`scam:check`（v1.16，回 `scam:result`）、`profile:get`（v1.17，回 `profile`）、`ping`；其餘 `UNKNOWN_TYPE`；`api.chats` 以外的聊天室回 `UNKNOWN_CHAT`。
-+- 可送：`message:send`（`requestId`、`chatId`、`text`、可選 `mentions`／`replyTo`；`mediaId`／`sticker` 回 `INVALID_REQUEST`）、`history:fetch`、`scam:check`（v1.16，回 `scam:result`）、`chat:admins:get`（v1.18，回 `chat:admins`）、`profile:get`（v1.17，回 `profile`）、`ping`；其餘 `UNKNOWN_TYPE`；`api.chats` 以外的聊天室回 `UNKNOWN_CHAT`。
++- 可送：`message:send`（`requestId`、`chatId`、`text`、可選 `mentions`／`replyTo`；`mediaId`／`sticker` 回 `INVALID_REQUEST`）、`history:fetch`、`scam:check`（v1.16，回 `scam:result`）、`chat:admins:get`（v1.18，回 `chat:admins`）、`avatar:check`（回 `avatar:result`）、`profile:get`（v1.17，回 `profile`）、`ping`；其餘 `UNKNOWN_TYPE`；`api.chats` 以外的聊天室回 `UNKNOWN_CHAT`。另收 `member:join`（`api.chats` 內 OpenChat 新成員，不含本帳號）。
  - 限制：每連線 `limits.sendsPerSecond`，且全部機器人合計 `api.sendsPerMinute`（預設 20，≤120）。
  
  ### HTTP
 diff --git a/README.en.md b/README.en.md
-index 6b97c31..e896928 100644
+index 6b97c31..ada28d3 100644
 --- a/README.en.md
 +++ b/README.en.md
 @@ -26,7 +26,27 @@ flowchart LR
@@ -184,11 +188,12 @@ index 6b97c31..e896928 100644
  Right-click a chat message (long-press on touch screens) and choose 「顯示寄件者 ID」 to view and copy another person's ID. Bots read `message.senderId` in live `message`/`message:edit` frames, or `messages[].senderId` in `history`, still restricted to `api.chats`. OpenChat returns the OpenChat member ID, not the ordinary LINE account ID; this feature does not look up members who have not appeared in messages.
  
  `session.json` contains credentials and E2EE key material. It must be saved with permissions `600` and must not be shared or committed. `config.yaml` contains personal configuration and is excluded from version control. `api-token.json` (the bot Token's SHA-256 and creation time, permissions `600`) and `linejs.pid` (the running service's PID, used by `stop`/`restart`) are also excluded from version control.
-@@ -164,18 +190,25 @@ Lets your own programs (bots) send and receive messages. **Disabled by default**
+@@ -164,18 +190,28 @@ Lets your own programs (bots) send and receive messages. **Disabled by default**
  | Bot → Service | `history:fetch` | `{ requestId, chatId, limit?, before? }`: the same pagination as the web interface, without a read-receipt snapshot |
  | Bot → Service | `scam:check` | `{ requestId, chatId, messageId }`: check with Jev a text message **from someone else** in `api.chats` that the service has shown (received live or returned by `history:fetch`); the server sends its own cached text. Requires `jev.token` (otherwise `SCAM_CHECK_UNAVAILABLE`); 10 per minute across all bots, each billed by TypeSafe. Success returns `scam:result { requestId, chatId, messageId, analysis: { probability, tactic? } }` |
  | Bot → Service | `profile:get` | `{ requestId }`: get your own ID and name at any time; returns `profile { requestId, profile: { userId, displayName, pictureId? } }` (the same as `auth:ready`; no LINE request; shares the 10-per-second-per-connection budget with `history:fetch`; returns `INVALID_REQUEST` when not signed in) |
 +| Bot → Service | `chat:admins:get` | `{ requestId, chatId }`: OpenChat (`square`) in `api.chats` only; returns `chat:admins { requestId, chatId, admins: [{ userId, displayName, role: "admin" or "coAdmin" }], ownMemberId }` only to the requester. Every request walks the full current member list, not cached sender roles |
++| Bot → Service | `avatar:check` | `{ requestId, chatId, memberId }`: only OpenChat members announced by `member:join` in this login (latest 500); the server fetches their **current** small profile picture from LINE and asks Jev whether it shows a crown. Requires `jev.token` (otherwise `AVATAR_CHECK_UNAVAILABLE`), shares the 10-per-minute all-bots budget with `scam:check`, and each check is billed by TypeSafe. Returns `avatar:result { requestId, chatId, memberId, analysis?: { probability } }`, without `analysis` when the member has no picture; failures return `AVATAR_CHECK_FAILED` |
  | Bot → Service | `ping` → `pong` | Keepalive; the service also checks with WebSocket protocol-level Pings every 30 seconds and disconnects after two missed rounds (ordinary WebSocket libraries answer automatically) |
  | Service → Bot | `hello`, `auth:state`, `status` | Sent on connection; sending/receiving is unavailable until `auth:state` is `ready` (LINE is logged in) |
 -| Service → Bot | `auth:ready` | Includes your own `profile.userId` to skip your own messages (messages sent from your phone also use this id) |
@@ -196,6 +201,7 @@ index 6b97c31..e896928 100644
  | Service → Bot | `channels` | Only chat rooms in `api.chats`; resent on changes |
  | Service → Bot | `message`, `message:edit`, `message:unsend` | Only **live** messages, edits and take-backs from chat rooms in `api.chats`, including your own |
 -| Service → Bot | `sent`, `history`, `scam:result`, `profile`, `error` | Responses to corresponding requests; errors contain only generic codes (`UNKNOWN_CHAT`, `INVALID_REQUEST`, `RATE_LIMITED`, `SEND_FAILED`, `SCAM_CHECK_FAILED`…) |
++| Service → Bot | `member:join` | `{ chatId, member: { userId, displayName } }`: sent live when someone joins an OpenChat in `api.chats` (LINE `NOTIFIED_JOIN_SQUARE_CHAT`); never this account; `displayName` is empty when LINE sends none. Advertised by `"member:join"` in `hello.capabilities` |
 +| Service → Bot | `sent`, `history`, `scam:result`, `chat:admins`, `profile`, `error` | Responses to corresponding requests; errors contain only generic codes (`UNKNOWN_CHAT`, `INVALID_REQUEST`, `RATE_LIMITED`, `SEND_FAILED`, `SCAM_CHECK_FAILED`…) |
  
  Everything else returns `UNKNOWN_TYPE`: no login/logout, `chat:read` (sending read receipts), `message:unsend` (taking back), `message:react` (reactions), `channels:refresh`, sticker lists, or Token management. **Old messages are not replayed** (bots start from “now” and do not respond to history again; use `history:fetch` for history). No `read`, `update:available`, `api:state`, or `scam:state` is provided. Image/video and other media bytes are also inaccessible (bots see only the message's `contentType`).
@@ -208,13 +214,14 @@ index 6b97c31..e896928 100644
 +- `scam:check` first rejects missing, non-text, unsent, undecryptable, system and known own messages from the local cache, without querying LINE membership for them. For other OpenChat messages, it resolves complete membership if own identity is unknown; failure never calls paid analysis. After waiting, it rereads and validates the current message, still rejecting own phone and bot messages. Actual mentions still use `message:send.mentions` (up to 20, UTF-16 offsets) and `replyTo`.
 +- Concurrent analyses in the same login session and OpenChat share only an in-flight own-identity lookup. The slot is released on success or failure without automatic retries; logout invalidates shared state and stale results. Each message still consumes its own analysis quota and is analyzed separately. This shares no administrator grants: explicit `chat:admins:get` requests always perform a fresh lookup.
 +- Admins returned in `chat:admins` may be mentioned even if they have never spoken, but only by the **same bot connection**, in the same chat, after its latest-started lookup succeeds. Starting another lookup immediately revokes the old list and supersedes any lookup still in flight; a superseded success returns `CHAT_ADMINS_FAILED` and cannot restore grants while the newer lookup is pending or after it succeeds or fails. Logout/account changes clear all grants. Arbitrary IDs remain forbidden. Query again before notifying to avoid stale roles.
++- `avatar:check` sends the picture to TypeSafe through its experimental "Dreamer-ready" image feature (requests carry `TypeSafe-Danger-Zone-Images: true`); only PNG/JPEG are sent, other formats return `AVATAR_CHECK_FAILED` without a request. Bots cannot name arbitrary members or upload images; logout/account changes clear the eligible list and discard stale results.
 +- New-message, edit and unsend events within `api.chats` share one JSON encoding across pages and bots, iterating both connection sets without allocating a combined array. Events outside that scope remain page-only; page-only data and secrets are not exposed to bots. Responses and broadcasts check connection state and backpressure before encoding for an eligible recipient; no JSON is produced when no recipient can receive it. Existing backpressure limits and disconnection behavior remain unchanged.
 +- Channel-list refreshes share one sorted snapshot between pages and bots. The bot list is still filtered separately by `api.chats`, avoiding duplicate construction and sorting of the full list without changing its order or visibility.
  - Bots speak through **your personal account**. Frequent or mechanical sending may trigger LINE's risk controls. Set conservative limits and use a secondary account first.
  
  ```js
 diff --git a/README.ja.md b/README.ja.md
-index a6e80b5..a2b6ef2 100644
+index a6e80b5..0b8e9f3 100644
 --- a/README.ja.md
 +++ b/README.ja.md
 @@ -26,7 +26,27 @@ flowchart LR
@@ -259,11 +266,12 @@ index a6e80b5..a2b6ef2 100644
  チャットのメッセージを右クリック（タッチ画面では長押し）して「顯示寄件者 ID」を選ぶと、相手の ID を表示・コピーできます。ボットはリアルタイムの `message`／`message:edit` の `message.senderId`、または `history` の `messages[].senderId` から取得できます。引き続き `api.chats` 内のみが対象です。OpenChat では通常の LINE アカウント ID ではなく、その社群のメンバー ID を返します。メッセージに登場していないメンバーは検索しません。
  
  `session.json` には認証情報と E2EE key material が含まれるため、必ず権限 `600` で保存し、共有・コミットしてはいけません。`config.yaml` は個人設定であり、バージョン管理には含めません。`api-token.json`（ボット Token の SHA-256 と作成時刻、権限 `600`）と `linejs.pid`（実行中のサービスの PID。`stop`／`restart` で使用）もバージョン管理には含めません。
-@@ -164,18 +190,25 @@ HTTP：`GET /media/:mediaId`（スタンプ、スタンプパックのアイコ
+@@ -164,18 +190,28 @@ HTTP：`GET /media/:mediaId`（スタンプ、スタンプパックのアイコ
  | ボット → サービス | `history:fetch` | `{ requestId, chatId, limit?, before? }`：Web ページと同じページ取得ですが、既読 snapshot は含みません |
  | ボット → サービス | `scam:check` | `{ requestId, chatId, messageId }`：`api.chats` 内の**相手から届いた**、サービスが表示済み（リアルタイム受信または `history:fetch` で取得）のテキストメッセージを Jev で分析します。サーバーは自身のキャッシュのテキストを送ります。`jev.token` の設定が必要で（未設定時は `SCAM_CHECK_UNAVAILABLE`）、全ボット合計で毎分 10 回、1 回ごとに TypeSafe の料金がかかります。成功時は `scam:result { requestId, chatId, messageId, analysis: { probability, tactic? } }` |
  | ボット → サービス | `profile:get` | `{ requestId }`：自分の ID と名前をいつでも取得できます。`profile { requestId, profile: { userId, displayName, pictureId? } }` を返します（`auth:ready` と同じ内容。LINE には問い合わせず、`history:fetch` と接続ごとに毎秒 10 回の枠を共有。未ログイン時は `INVALID_REQUEST`） |
 +| ボット → サービス | `chat:admins:get` | `{ requestId, chatId }`：`api.chats` 内の OpenChat（`square`）のみ。要求元にのみ `chat:admins { requestId, chatId, admins: [{ userId, displayName, role: "admin" または "coAdmin" }], ownMemberId }` を返します。毎回すべての現在のメンバーをページ取得し、送信者の役割キャッシュは使いません |
++| ボット → サービス | `avatar:check` | `{ requestId, chatId, memberId }`：このログイン中に `member:join` で通知した OpenChat の新メンバー（直近 500 件）のみ。サーバーが LINE から**現在の**プロフィール画像（小サイズ）を取り直し、Jev で王冠の有無を判定します。`jev.token` が必要（未設定時は `AVATAR_CHECK_UNAVAILABLE`）で、`scam:check` と全ボット合計毎分 10 回の枠を共有し、1 回ごとに TypeSafe の料金がかかります。`avatar:result { requestId, chatId, memberId, analysis?: { probability } }` を返し、画像がない場合は `analysis` を含みません。失敗時は `AVATAR_CHECK_FAILED` |
  | ボット → サービス | `ping` → `pong` | 接続維持。サービスは WebSocket プロトコルレベルの Ping でも 30 秒ごとに確認し、2 回続けて応答がなければ切断します（一般的な WebSocket ライブラリは自動で応答します） |
  | サービス → ボット | `hello`、`auth:state`、`status` | 接続時に送信。`auth:state` が `ready` でない場合（LINE 未ログイン）、まだ送受信できません |
 -| サービス → ボット | `auth:ready` | 自分の `profile.userId` を含み、自分が送ったメッセージを除外するために使えます（スマートフォンから送ったメッセージもこの id です） |
@@ -271,6 +279,7 @@ index a6e80b5..a2b6ef2 100644
  | サービス → ボット | `channels` | `api.chats` のチャットルームのみ。変更時に再送します |
  | サービス → ボット | `message`、`message:edit`、`message:unsend` | `api.chats` のチャットルームの**リアルタイム**メッセージ、編集、送信取消のみ。自分が送ったものも含みます |
 -| サービス → ボット | `sent`、`history`、`scam:result`、`profile`、`error` | 対応するリクエストへの応答。エラーは汎用コードのみ（`UNKNOWN_CHAT`、`INVALID_REQUEST`、`RATE_LIMITED`、`SEND_FAILED`、`SCAM_CHECK_FAILED`…） |
++| サービス → ボット | `member:join` | `{ chatId, member: { userId, displayName } }`：`api.chats` 内の OpenChat に誰かが参加するとリアルタイムで送信（LINE の `NOTIFIED_JOIN_SQUARE_CHAT`）。自分は含まず、LINE が名前を送らない場合 `displayName` は空文字列。対応時は `hello.capabilities` に `"member:join"` を含みます |
 +| サービス → ボット | `sent`、`history`、`scam:result`、`chat:admins`、`profile`、`error` | 対応するリクエストへの応答。エラーは汎用コードのみ（`UNKNOWN_CHAT`、`INVALID_REQUEST`、`RATE_LIMITED`、`SEND_FAILED`、`SCAM_CHECK_FAILED`…） |
  
  それ以外はすべて `UNKNOWN_TYPE` を返します。ログイン／ログアウト、`chat:read`（既読通知）、`message:unsend`（送信取消）、`message:react`（リアクション）、`channels:refresh`、スタンプ一覧、Token 管理は利用できません。**過去のメッセージは再送しません**（ボットは「今」から開始し、履歴に重複して応答しません。履歴は `history:fetch` を使ってください）。`read`、`update:available`、`api:state`、`scam:state` は送信しません。画像／動画などのメディアのバイト列も取得できません（ボットにはメッセージの `contentType` のみ見えます）。
@@ -283,13 +292,14 @@ index a6e80b5..a2b6ef2 100644
 +- `scam:check` はまずローカルキャッシュで、存在しない・非テキスト・送信取消済み・復号失敗・システム・既知の自分のメッセージを拒否し、それらのために LINE のメンバー情報を取得しません。それ以外の OpenChat メッセージで自分の ID が不明なら完全なメンバー情報を取得し、失敗時は有料分析を呼びません。待機後は最新のメッセージを読み直して検証し、スマートフォンやボット自身のメッセージも引き続き拒否します。実際のメンションは `message:send.mentions`（最大 20 人、UTF-16 位置）と `replyTo` を使います。
 +- 同じログインセッション・OpenChat の並行分析は、処理中の自分の ID 取得だけを共有します。成功・失敗後に共有枠を解放し、自動再試行はしません。ログアウトで共有状態と古い結果を無効化します。各メッセージは個別に分析制限を消費し、個別に分析します。管理者へのメンション権限は共有せず、明示的な `chat:admins:get` は毎回新しく取得します。
 +- `chat:admins` が返した管理者は未発言でもメンションできますが、**同じボット接続・同じチャット**で最後に開始した取得が成功した場合に限ります。再取得の開始時に古い許可と処理中の以前の取得の権限を直ちに破棄します。以前の取得が後から成功しても `CHAT_ADMINS_FAILED` を返し、新しい取得の待機中・成功後・失敗後のいずれも古い許可を復活させません。ログアウト・アカウント変更で全許可を消去します。任意の ID は許可されません。通知前に再取得してください。
++- `avatar:check` は TypeSafe の実験的な画像機能（「Dreamer-ready」、リクエストに `TypeSafe-Danger-Zone-Images: true`）へ画像を送ります。PNG／JPEG のみ送信し、その他の形式は送らずに `AVATAR_CHECK_FAILED` を返します。ボットは任意のメンバーの指定や画像のアップロードはできません。ログアウト・アカウント変更で対象一覧を消去し、古い結果を破棄します。
 +- `api.chats` 内の新着・編集・送信取消イベントは、Web ページとボットで JSON エンコードを一度だけ共有し、接続配列を結合せず両方の集合を走査します。範囲外のイベントは引き続き Web ページのみに送信し、Web ページ専用データや機密をボットへ公開しません。応答とブロードキャストは接続状態とバックプレッシャーを先に確認し、送信可能な接続がある場合のみエンコードします。送信先がなければ JSON を生成せず、既存の上限と切断処理は変更しません。
 +- チャット一覧の更新では、Web ページとボットが一つのソート済みスナップショットを共有します。ボット用の一覧は引き続き `api.chats` で絞り込み、全チャットの一覧作成とソートを重複させず、順序や公開範囲も変更しません。
  - ボットは**あなたの個人アカウント**として発言します。頻繁な送信や機械的な送信は LINE の不正利用対策に検知される可能性があります。上限は控えめに設定し、まずサブアカウントを使ってください。
  
  ```js
 diff --git a/README.md b/README.md
-index 7704eb9..e3a027e 100644
+index 7704eb9..5665872 100644
 --- a/README.md
 +++ b/README.md
 @@ -26,7 +26,27 @@ flowchart LR
@@ -334,11 +344,12 @@ index 7704eb9..e3a027e 100644
  在聊天室訊息上按右鍵（觸控長按），選「顯示寄件者 ID」可查看與複製其他人的 ID。機器人 API 從即時 `message`／`message:edit` 的 `message.senderId`，或 `history` 的 `messages[].senderId` 取得；仍限 `api.chats` 內的聊天室。社群回傳的是社群成員 ID，不是一般 LINE 帳號 ID；此功能不查詢未出現過的成員。
  
  `session.json` 包含憑證與 E2EE key material，必須以權限 `600` 保存，不得分享或提交。`config.yaml` 為個人設定，不入版本控制。`api-token.json`（機器人 Token 的 SHA-256 與建立時間，權限 `600`）與 `linejs.pid`（執行中服務的 PID，供 `stop`／`restart` 使用）同樣不入版本控制。
-@@ -164,18 +190,25 @@ HTTP：`GET /media/:mediaId`（貼圖、貼圖包圖示、大頭照與原圖、
+@@ -164,18 +190,28 @@ HTTP：`GET /media/:mediaId`（貼圖、貼圖包圖示、大頭照與原圖、
  | 機器人 → 服務 | `history:fetch` | `{ requestId, chatId, limit?, before? }`：與網頁相同的分頁，但不附已讀快照 |
  | 機器人 → 服務 | `scam:check` | `{ requestId, chatId, messageId }`：以 Jev 分析 `api.chats` 內**別人傳來**、服務已顯示（即時收到或 `history:fetch` 取得）的文字訊息；伺服器送自己快取的文字。需設定 `jev.token`（否則 `SCAM_CHECK_UNAVAILABLE`），所有機器人合計每分鐘 10 次，每次依 TypeSafe 計費。成功回 `scam:result { requestId, chatId, messageId, analysis: { probability, tactic? } }` |
  | 機器人 → 服務 | `profile:get` | `{ requestId }`：隨時取得自己的 ID 與名稱，回 `profile { requestId, profile: { userId, displayName, pictureId? } }`（同 `auth:ready`；不呼叫 LINE，與 `history:fetch` 共用每連線每秒 10 次；未登入回 `INVALID_REQUEST`） |
 +| 機器人 → 服務 | `chat:admins:get` | `{ requestId, chatId }`：只限 `api.chats` 內 OpenChat（`square`）；回 `chat:admins { requestId, chatId, admins: [{ userId, displayName, role: "admin" 或 "coAdmin" }], ownMemberId }`，只送要求者；每次重新完整分頁取得目前成員，非發言者角色快取 |
++| 機器人 → 服務 | `avatar:check` | `{ requestId, chatId, memberId }`：只限本次登入以 `member:join` 通知過的 OpenChat 新成員（最近 500 筆）；伺服器重新向 LINE 取得其**目前**大頭貼小圖，以 Jev 判斷是否有皇冠。需 `jev.token`（否則 `AVATAR_CHECK_UNAVAILABLE`），與 `scam:check` 共用所有機器人每分鐘 10 次額度，每次依 TypeSafe 計費。回 `avatar:result { requestId, chatId, memberId, analysis?: { probability } }`，沒有大頭貼時不含 `analysis`；失敗回 `AVATAR_CHECK_FAILED` |
  | 機器人 → 服務 | `ping` → `pong` | 保活；服務另以 WebSocket 協定層 Ping 每 30 秒檢查，連續兩輪未回應即斷線（一般 WebSocket 函式庫會自動回應） |
  | 服務 → 機器人 | `hello`、`auth:state`、`status` | 連線即送；`auth:state` 不是 `ready`（LINE 尚未登入）時還不能收發 |
 -| 服務 → 機器人 | `auth:ready` | 含自己的 `profile.userId`，用來略過自己發的訊息（你在手機上發的也會是這個 id） |
@@ -346,6 +357,7 @@ index 7704eb9..e3a027e 100644
  | 服務 → 機器人 | `channels` | 只含 `api.chats` 內的聊天室；有變動時重送 |
  | 服務 → 機器人 | `message`、`message:edit`、`message:unsend` | 只有 `api.chats` 內聊天室的**即時**訊息、編輯與收回；包含你自己發的 |
 -| 服務 → 機器人 | `sent`、`history`、`scam:result`、`profile`、`error` | 對應請求的回應；錯誤只有 generic 代碼（`UNKNOWN_CHAT`、`INVALID_REQUEST`、`RATE_LIMITED`、`SEND_FAILED`、`SCAM_CHECK_FAILED`…） |
++| 服務 → 機器人 | `member:join` | `{ chatId, member: { userId, displayName } }`：`api.chats` 內 OpenChat 有人加入時即時送出（LINE `NOTIFIED_JOIN_SQUARE_CHAT`）；不含本帳號，LINE 未附名稱時 `displayName` 為空字串。`hello.capabilities` 含 `"member:join"` 才支援 |
 +| 服務 → 機器人 | `sent`、`history`、`scam:result`、`chat:admins`、`profile`、`error` | 對應請求的回應；錯誤只有 generic 代碼（`UNKNOWN_CHAT`、`INVALID_REQUEST`、`RATE_LIMITED`、`SEND_FAILED`、`SCAM_CHECK_FAILED`…） |
  
  其餘一律回 `UNKNOWN_TYPE`：沒有登入／登出、`chat:read`（已讀回報）、`message:unsend`（收回）、`message:react`（回應）、`channels:refresh`、貼圖清單、Token 管理。**不重播舊訊息**（機器人從「現在」開始，不會重複回應歷史；要歷史請用 `history:fetch`）；不給 `read`、`update:available`、`api:state`、`scam:state`；圖片／影片等媒體位元組也無法取得（機器人只看到訊息的 `contentType`）。
@@ -358,13 +370,14 @@ index 7704eb9..e3a027e 100644
 +- `scam:check` 先以本地快取拒絕不存在、非文字、已收回、解密失敗、系統及已知本帳號訊息，不為這些要求查詢 LINE 成員。其餘 OpenChat 訊息若尚無自己的成員身分，先取得完整成員資料，失敗不呼叫付費分析；等待後重新讀取並檢查目前訊息，自己的手機與機器人訊息仍一律拒絕。發送真正標記仍使用 `message:send.mentions`（最多 20 個、UTF-16 位置）與 `replyTo`。
 +- 同一登入工作階段、同一 OpenChat 的並行分析共用尚未完成的自己身分查詢，完成或失敗後釋放，不自動重試；登出會作廢共用狀態及舊結果。每則訊息仍分別計入分析限額並執行分析。這不共用管理員授權，明確的 `chat:admins:get` 仍每次重新查詢。
 +- `chat:admins` 回傳的管理員即使尚未發言，也能由**同一條機器人連線**以 `message:send.mentions` 標記；授權限同一聊天室、最後發起且成功完成的查詢。再次查詢會立即撤銷舊名單與尚未完成的舊查詢授權資格；舊查詢即使較晚成功也只回 `CHAT_ADMINS_FAILED`，不能在新查詢等待中、成功或失敗後恢復舊授權。登出／換帳號清除全部授權。不是任意 ID 白名單；通知前應重新查詢，避免使用過時角色。
++- `avatar:check` 會把圖片送至 TypeSafe，使用其標示為「Dreamer-ready」的實驗性圖片功能（請求帶 `TypeSafe-Danger-Zone-Images: true`）；僅 PNG／JPEG，其他格式不送出並回 `AVATAR_CHECK_FAILED`。機器人無法指定任意成員或上傳圖片；登出／換帳號清空可查名單並丟棄舊結果。
 +- `api.chats` 內的新訊息、編輯與收回事件，由網頁與機器人共用一次 JSON 編碼，直接遍歷兩組連線，不建立合併連線陣列。範圍外事件仍只送網頁；網頁專用資料與機密不因此開放給機器人。回應與廣播都先檢查連線狀態及背壓，再為可傳送的連線編碼；沒有可傳送接收端時不產生 JSON，既有背壓上限與斷線處理不變。
 +- 聊天室清單刷新時，網頁與機器人共用同一份已排序快照；機器人名單仍另外依 `api.chats` 篩選，不重複建立及排序全部聊天室，也不改變排序或資料可見性。
  - 機器人以**你的真人帳號**發言，頻繁或機械式的發送可能觸發 LINE 風控。請保守設定上限，並先用次要帳號。
  
  ```js
 diff --git a/SECURITY.md b/SECURITY.md
-index c3e123e..a41f21b 100644
+index c3e123e..0920bde 100644
 --- a/SECURITY.md
 +++ b/SECURITY.md
 @@ -116,8 +116,9 @@ approval, and a regression against any of them is treated as a vulnerability.
@@ -383,23 +396,24 @@ index c3e123e..a41f21b 100644
  | The token is 256 bits of randomness with a `linejs_` prefix. Only its SHA-256 is stored (`api-token.json`, mode `0600`, git-ignored, written via temporary file and rename); it is compared in constant time and shown **once**, only to the connection that asked for it. It is never logged or broadcast. | `src/http/apiToken.ts`, `src/ws/hub.ts`, `src/cli.ts` |
  | Regenerating or revoking the token closes every bot connection immediately. Only ordinary `/ws` connections (the web page, or the local CLI, which obtains the page cookie the same way) can create or revoke it; a bot cannot. | `src/ws/hub.ts` |
 -| A bot may send only `message:send` (text only), `history:fetch`, `scam:check` (see the scam check section), `profile:get` (this account's own profile, the same one `auth:ready` carries; no LINE request) and `ping`; everything else, including login, logout, read receipts, stickers and media, is `UNKNOWN_TYPE`. It can reach only the chats in `api.chats` (anything else is `UNKNOWN_CHAT`), receives only live messages (no replay, no read positions) and never receives media bytes. | `src/ws/hub.ts`, `src/ws/requests.ts` |
-+| A bot may send only `message:send` (text only), `history:fetch`, `scam:check` (see the scam check section), `chat:admins:get` (OpenChat only), `profile:get` (this account's own profile, the same one `auth:ready` carries; no LINE request) and `ping`; everything else, including login, logout, read receipts, stickers and media, is `UNKNOWN_TYPE`. It can reach only the chats in `api.chats` (anything else is `UNKNOWN_CHAT`), receives only live messages (no replay, no read positions) and never receives media bytes. | `src/ws/hub.ts`, `src/ws/requests.ts` |
++| A bot may send only `message:send` (text only), `history:fetch`, `scam:check` (see the scam check section), `chat:admins:get` (OpenChat only), `avatar:check` (see the scam check section), `profile:get` (this account's own profile, the same one `auth:ready` carries; no LINE request) and `ping`; everything else, including login, logout, read receipts, stickers and media, is `UNKNOWN_TYPE`. It can reach only the chats in `api.chats` (anything else is `UNKNOWN_CHAT`), receives only live messages and `member:join` notices for OpenChat in `api.chats` (no replay, no read positions; never this account's own join) and never receives media bytes. | `src/ws/hub.ts`, `src/ws/requests.ts` |
  | Sending is limited per connection (`limits.sendsPerSecond`, at most 5/s) and across all bots (`api.sendsPerMinute`, at most 120/min). | `src/ws/hub.ts`, `src/limit.ts` |
 +| `chat:admins:get` is bot-only, restricted to known `square` chats in `api.chats`, limited to 10 requests/minute across all bots, and advertised by `hello.capabilities: ["chat:admins"]`. It returns fresh, completely paginated JOINED administrators/co-administrators plus this account's OpenChat member id only to the requester. Missing identity/metadata, repeated pagination tokens, a 1000-page ceiling or upstream failure is generic `CHAT_ADMINS_FAILED`, never a partial list; other chat kinds get `CHAT_ADMINS_UNSUPPORTED`. Session generation discards stale results on logout/account changes. LINE does not provide an atomic snapshot across pages. | `src/ws/hub.ts`, `src/line/provider.ts` |
 +| Bots may mention otherwise unseen administrators only after their own connection's latest-started `chat:admins:get` succeeds for that exact chat. A new lookup immediately revokes the previous grant and supersedes in-flight lookups; superseded successes return `CHAT_ADMINS_FAILED` and never restore grants while the latest lookup is pending or after it succeeds or fails. Logout/account changes clear all grants. Existing speaker-only validation remains for pages and other targets. | `src/ws/hub.ts` |
  
  ### Scam check (TypeSafe Jev, off by default)
  
-@@ -138,6 +141,8 @@ approval, and a regression against any of them is treated as a vulnerability.
+@@ -138,6 +141,9 @@ approval, and a regression against any of them is treated as a vulnerability.
  | The token is used only as the `Authorization: Bearer` header to `https://api.typesafe.ai/v1/systemone`, with redirects refused. It is never sent to the page (pages only learn `scam:state { enabled }`), logged, or included in errors; a failed call logs only `SCAM_CHECK_FAILED` with the HTTP status. | `src/jev/client.ts`, `src/ws/hub.ts` |
  | Only an explicit request sends anything: from a page, `scam:check` is limited to 10 per minute per connection; from a bot, it is limited to the chats in `api.chats` and to 10 per minute across all bot connections together. The server sends **its own cached text** of a message it has shown, from someone other than this account, that was not taken back, decrypted and not a system message; text supplied by the client is ignored, so the endpoint cannot be used to send arbitrary text out. Nothing else (sender, chat, other messages) is sent. | `src/ws/hub.ts`, `src/ws/requests.ts` |
  | The answer is parsed fail-closed: without a probability between 0 and 1 there is no result, and an unknown scam kind is dropped. The result goes only to the connection that asked. | `src/jev/client.ts`, `src/ws/hub.ts` |
 +| OpenChat own-message exclusion uses its own member id, not the talk profile id or only previous service sends. Locally ineligible messages are refused before any membership request. For eligible candidates with unknown own identity, complete membership is resolved before analysis; failure is closed without a paid request. After waiting, the current cached message is reread and validated, including edits, unsends and own identity. This also excludes messages sent from the account's phone before the bot ever sends. | `src/ws/hub.ts`, `src/line/provider.ts` |
 +| Concurrent analyses share only in-flight own-identity discovery within the same chat and login session. Success and failure release the slot; logout clears it, and stale completion cannot fill or remove a new session's slot. Each analysis remains separately rate-limited. This never grants mention permission or coalesces explicit `chat:admins:get` requests, which must stay fresh. | `src/ws/hub.ts` |
++| `avatar:check` (bot only) sends a profile picture only for an OpenChat member this server itself announced by `member:join` in `api.chats` during the current login (latest 500); bots cannot name other members or supply images. The server looks the picture up fresh from LINE's CDN, sends PNG/JPEG only (other formats fail without a request) with `TypeSafe-Danger-Zone-Images: true`, shares the all-bots 10-per-minute paid-check budget with `scam:check`, parses fail-closed, answers only the asking bot, and logs only `AVATAR_CHECK_FAILED`. Logout clears the eligible list and drops stale results. | `src/ws/hub.ts`, `src/jev/client.ts`, `src/line/provider.ts` |
  
  ### Secrets and credentials
  
-@@ -149,6 +154,9 @@ approval, and a regression against any of them is treated as a vulnerability.
+@@ -149,6 +155,9 @@ approval, and a regression against any of them is treated as a vulnerability.
  | `session.json` and `config.yaml` are git-ignored. The process runs with `umask 077`. | `.gitignore`, `src/main.ts` |
  | Logs never contain credentials, tokens, QR URLs, PINs, key material, or package error objects. Internal errors are logged as short codes locally; clients only ever receive a generic message. | `src/ws/hub.ts`, project rule |
  | On logout or auth failure, the message cache, media cache and read state are cleared from memory. | `src/ws/hub.ts` |
@@ -409,7 +423,7 @@ index c3e123e..a41f21b 100644
  | Decrypt or parse failures **fail closed**: a placeholder is shown; content is never guessed. | project rule |
  
  ### Input, limits and abuse resistance
-@@ -171,9 +179,13 @@ approval, and a regression against any of them is treated as a vulnerability.
+@@ -171,9 +180,13 @@ approval, and a regression against any of them is treated as a vulnerability.
  | Media types are determined from content bytes; SVG and HTML are never served as received media. | `src/media/service.ts` |
  | Received files (`file-<id>`, same seen-message rule and size limit) are never sniffed or shown inline: always `application/octet-stream` with `Content-Disposition: attachment`, `no-store`, and no longer served once taken back. | `src/line/provider.ts`, `src/http/server.ts` |
  | Download size is capped (`limits.downloadMaxBytes`, default 50 MiB, at most 100 MiB) and the media cache is a bounded LRU. | `src/line/provider.ts`, `src/media/service.ts` |
@@ -425,6 +439,15 @@ index c3e123e..a41f21b 100644
  | Messages are never written to disk. At most 500 are kept per channel in memory, de-duplicated by message id. | `src/model/store.ts` |
  
  ### PWA
+@@ -249,6 +262,8 @@ Be aware of these. They are not bugs, and reports that only restate them will be
+    message's text to TypeSafe, subject to TypeSafe's own terms and data handling, and is billed to the
+    key. The result is a model estimate that can be wrong in both directions (and a scammer can word a
+    message to look harmless); it is advice, not a verdict.
++   With a bot using `avatar:check`, each check also sends the joining member's current profile
++   picture to TypeSafe through an image feature TypeSafe itself labels experimental ("Dreamer-ready").
+ 
+ ## 7. Hardening checklist for users
+ 
 diff --git a/src/http/server.ts b/src/http/server.ts
 index 6f58cbd..a4b2802 100644
 --- a/src/http/server.ts
@@ -496,6 +519,88 @@ index 6f58cbd..a4b2802 100644
  /** A single `bytes=a-b` range, which is all a media element sends; anything else is served in full. */
  function byteRange(header: string | undefined, length: number): { start: number; end: number } | "unsatisfiable" | undefined {
    const match = header ? /^bytes=(\d*)-(\d*)$/.exec(header) : null;
+diff --git a/src/jev/client.ts b/src/jev/client.ts
+index c08dc2f..6872020 100644
+--- a/src/jev/client.ts
++++ b/src/jev/client.ts
+@@ -1,8 +1,12 @@
++import { randomUUID } from "node:crypto";
++import type { MediaBytes } from "../media/service.js";
+ import { SCAM_TACTICS, type ScamAnalysis, type ScamTactic } from "../model/dto.js";
+ 
+ /** Anything that can rate a text; the hub only needs this (tests pass a fake). */
+ export interface ScamAnalyzer {
+   analyzeScam(text: string): Promise<ScamAnalysis>;
++  /** Chance (0–1) that a profile picture shows a crown; only PNG or JPEG pictures can be judged. */
++  analyzeCrown(image: MediaBytes): Promise<{ probability: number }>;
+ }
+ 
+ export interface JevClientOptions {
+@@ -47,6 +51,17 @@ const QUESTIONS = {
+   },
+ } as const;
+ 
++const CROWN_QUESTION = {
++  type: "noul",
++  instructions: "Does `avatar` (a chat member's profile picture) show a crown?",
++  criteria: {
++    true: "Any crown, tiara or crown symbol, emoji, icon or badge appears anywhere in the picture, including one drawn to look like a chat administrator's crown badge.",
++    false: "No crown, tiara or crown-like symbol appears in the picture.",
++  },
++} as const;
++
++const IMAGE_FORMATS: Readonly<Record<string, "png" | "jpg">> = { "image/png": "png", "image/jpeg": "jpg" };
++
+ function unit(value: unknown): value is number {
+   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
+ }
+@@ -65,10 +80,35 @@ export class JevClient implements ScamAnalyzer {
+   }
+ 
+   async analyzeScam(text: string): Promise<ScamAnalysis> {
++    return parseAnswers(await this.post({ model: this.options.model, state: text, questions: QUESTIONS }, false));
++  }
++
++  async analyzeCrown(image: MediaBytes): Promise<{ probability: number }> {
++    const format = IMAGE_FORMATS[image.mime];
++    if (!format || image.bytes.length === 0) throw new Error("format");
++    // A fresh reference per request cannot collide with any text in the request.
++    const reference = randomUUID();
++    const body = await this.post({
++      model: this.options.model,
++      state: { avatar: reference },
++      assets: { [reference]: { type: "image", format, data_base64: image.bytes.toString("base64") } },
++      questions: { crown: CROWN_QUESTION },
++    }, true);
++    const probability = ((body as { answers?: { crown?: { noul?: unknown } } } | null)?.answers?.crown)?.noul;
++    if (!unit(probability)) throw new Error("shape");
++    return { probability };
++  }
++
++  private async post(request: unknown, images: boolean): Promise<unknown> {
+     const response = await this.fetchImpl(ENDPOINT, {
+       method: "POST",
+-      headers: { Authorization: `Bearer ${this.options.token}`, "Content-Type": "application/json" },
+-      body: JSON.stringify({ model: this.options.model, state: text, questions: QUESTIONS }),
++      headers: {
++        Authorization: `Bearer ${this.options.token}`,
++        "Content-Type": "application/json",
++        // TypeSafe's experimental image tier must be opted into per request.
++        ...(images ? { "TypeSafe-Danger-Zone-Images": "true" } : {}),
++      },
++      body: JSON.stringify(request),
+       signal: AbortSignal.timeout(this.timeoutMs),
+       // The key must never follow a redirect to some other host.
+       redirect: "error",
+@@ -78,7 +118,7 @@ export class JevClient implements ScamAnalyzer {
+     if (declared > MAX_BODY_CHARS) throw new Error("size");
+     const body = await response.text();
+     if (body.length > MAX_BODY_CHARS) throw new Error("size");
+-    return parseAnswers(JSON.parse(body));
++    return JSON.parse(body);
+   }
+ }
+ 
 diff --git a/src/limit.ts b/src/limit.ts
 index c7143f7..59cd0c4 100644
 --- a/src/limit.ts
@@ -515,7 +620,7 @@ index c7143f7..59cd0c4 100644
      if (this.events.length >= this.max) return false;
      this.events.push(now);
 diff --git a/src/line/provider.ts b/src/line/provider.ts
-index 58f8902..73e8752 100644
+index 58f8902..7a3f03d 100644
 --- a/src/line/provider.ts
 +++ b/src/line/provider.ts
 @@ -3,7 +3,7 @@ import { BaseClient, type Device, type FetchLike } from "@evex/linejs/base";
@@ -527,7 +632,25 @@ index 58f8902..73e8752 100644
  import { withMyReaction } from "../model/store.js";
  import { memberRole, mentionMetadata, parseMentions, replyTarget } from "./members.js";
  import { parseEmojis } from "./emoji.js";
-@@ -69,6 +69,8 @@ export interface LineProvider {
+@@ -33,6 +33,8 @@ export interface ProviderEvents {
+    * Talk chats have no parsed live event: their reactions come with the message and with history.
+    */
+   onReactions: (chatId: string, messageId: string, reactions: Reactions | undefined) => void;
++  /** Someone joined an OpenChat chat (NOTIFIED_JOIN_SQUARE_CHAT); the name is "" when LINE sent none. */
++  onMemberJoin: (chatId: string, member: { userId: string; displayName: string }) => void;
+   onStatus: (state: "listening" | "reconnecting") => void;
+   onError: (code: "SESSION_WRITE_FAILED" | "LINE_LISTEN_FAILED" | "MESSAGE_PARSE_FAILED") => void;
+ }
+@@ -55,6 +57,8 @@ export interface LineProvider {
+   getProfile(): Profile;
+   fetchSticker(stickerId: string, animated: boolean): Promise<MediaBytes | undefined>;
+   fetchAvatar(host: AvatarHost, hash: string, full: boolean): Promise<MediaBytes | undefined>;
++  /** An OpenChat member's current profile picture (small preview), freshly looked up; undefined without one. */
++  fetchSquareMemberPicture(memberId: string): Promise<MediaBytes | undefined>;
+   fetchMessageMedia(messageId: string): Promise<MediaBytes | undefined>;
+   /** A file someone sent, as raw bytes with its name; never sniffed or shown inline. */
+   fetchMessageFile(messageId: string): Promise<MediaBytes | undefined>;
+@@ -69,6 +73,8 @@ export interface LineProvider {
    /** Where other members have read up to; empty when LINE has none (or the chat type has no receipts). */
    fetchReadPositions(channel: ChannelRef): Promise<ReadPosition[]>;
    fetchChannels(): Promise<Channel[]>;
@@ -536,7 +659,7 @@ index 58f8902..73e8752 100644
    fetchHistory(channel: ChannelRef, limit: number, before?: string): Promise<HistoryPage>;
    sendText(channel: ChannelRef, text: string, options?: SendTextOptions): Promise<Message>;
    sendSticker(channel: ChannelRef, packageId: number, stickerId: number): Promise<Message>;
-@@ -82,6 +84,8 @@ export interface LineProvider {
+@@ -82,6 +88,8 @@ export interface LineProvider {
  }
  
  const UNKNOWN_MEMBER = "成員";
@@ -545,7 +668,15 @@ index 58f8902..73e8752 100644
  
  const FRIEND_BATCH = 100;
  const FRIEND_BATCH_CONCURRENCY = 3;
-@@ -154,12 +158,15 @@ export class EvexLineProvider implements LineProvider {
+@@ -102,6 +110,7 @@ const LOOKUP_RETRY_MS = 5 * 60 * 1000;
+ // Past this many remembered failures, expired ones are dropped (they no longer block a retry anyway).
+ const MAX_LOOKUP_MISSES = 2000;
+ const TALK_USER_MID = /^u[0-9a-f]{32}$/;
++const SQUARE_MEMBER_MID = /^p[A-Za-z0-9]{10,64}$/;
+ const STICKER_PACKS_CACHE_MS = 10 * 60 * 1000;
+ const PACK_META_CONCURRENCY = 4;
+ const UNREAD_MAX_PAGES = 20;
+@@ -154,12 +163,15 @@ export class EvexLineProvider implements LineProvider {
    // Names and pictures keyed by mid. LINE events carry only mids, so these are learned from the
    // friend list, profile lookups and (for OpenChat history) the sender names inside events.
    private profiles = new Map<string, MemberProfile>();
@@ -562,7 +693,21 @@ index 58f8902..73e8752 100644
    // Messages whose media the browser may ask for, newest last. Requests are only honoured for
    // messages seen here, so the browser cannot use this session to probe arbitrary LINE objects.
    private mediaOrigins = new Map<string, { raw: LineMessage; square: boolean }>();
-@@ -420,11 +427,18 @@ export class EvexLineProvider implements LineProvider {
+@@ -300,6 +312,13 @@ export class EvexLineProvider implements LineProvider {
+           this.updateSquareMessage(update.squareChatMid, update.messageId, { reactions });
+           this.events.onReactions(update.squareChatMid, update.messageId, reactions);
+         }
++      } else if (type === "NOTIFIED_JOIN_SQUARE_CHAT" || type === "2") {
++        const joined = event.payload?.notifiedJoinSquareChat;
++        const member = joined?.joinedMember;
++        if (typeof joined?.squareChatMid !== "string" || typeof member?.squareMemberMid !== "string" || !SQUARE_MEMBER_MID.test(member.squareMemberMid)) return;
++        const name = typeof member.displayName === "string" ? member.displayName : "";
++        if (name) this.rememberProfile(member.squareMemberMid, name, avatarMediaId("obs", member.profileImageObsHash), true, memberRole(member.role));
++        this.events.onMemberJoin(joined.squareChatMid, { userId: member.squareMemberMid, displayName: name });
+       }
+     });
+     this.listen();
+@@ -420,11 +439,18 @@ export class EvexLineProvider implements LineProvider {
          signal: AbortSignal.timeout(STICKER_TIMEOUT_MS),
          redirect: "error",
        });
@@ -586,7 +731,7 @@ index 58f8902..73e8752 100644
        return { mime: "image/png", bytes };
      }
      return undefined;
-@@ -437,11 +451,14 @@ export class EvexLineProvider implements LineProvider {
+@@ -437,25 +463,40 @@ export class EvexLineProvider implements LineProvider {
    async fetchAvatar(host: AvatarHost, hash: string, full: boolean): Promise<MediaBytes | undefined> {
      const origin = host === "profile" ? "https://profile.line-scdn.net" : "https://obs.line-scdn.net";
      const response = await fetch(`${origin}/${hash}${full ? "" : "/preview"}`, { signal: AbortSignal.timeout(STICKER_TIMEOUT_MS), redirect: "error" });
@@ -606,7 +751,18 @@ index 58f8902..73e8752 100644
      return { mime, bytes };
    }
  
-@@ -451,11 +468,14 @@ export class EvexLineProvider implements LineProvider {
++  async fetchSquareMemberPicture(memberId: string): Promise<MediaBytes | undefined> {
++    const client = this.requireClient();
++    // The picture may have changed since the join event: judge the one members see now.
++    const { squareMember } = await client.base.square.getSquareMember({ squareMemberMid: memberId });
++    if (this.client !== client) throw new Error("NOT_AUTHENTICATED");
++    const hash = squareMember.profileImageObsHash;
++    return typeof hash === "string" && hash ? this.fetchAvatar("obs", hash, false) : undefined;
++  }
++
+   async fetchStickerPack(packageId: string): Promise<MediaBytes | undefined> {
+     for (const name of ["tab_on.png", "main.png"]) {
+       const response = await fetch(`https://stickershop.line-scdn.net/stickershop/v1/product/${packageId}/android/${name}`, {
          signal: AbortSignal.timeout(STICKER_TIMEOUT_MS),
          redirect: "error",
        });
@@ -626,7 +782,7 @@ index 58f8902..73e8752 100644
        return { mime, bytes };
      }
      return undefined;
-@@ -467,10 +487,13 @@ export class EvexLineProvider implements LineProvider {
+@@ -467,10 +508,13 @@ export class EvexLineProvider implements LineProvider {
        signal: AbortSignal.timeout(STICKER_TIMEOUT_MS),
        redirect: "error",
      });
@@ -644,7 +800,7 @@ index 58f8902..73e8752 100644
      return { mime: "image/png", bytes };
    }
  
-@@ -480,7 +503,18 @@ export class EvexLineProvider implements LineProvider {
+@@ -480,7 +524,18 @@ export class EvexLineProvider implements LineProvider {
     */
    async fetchStickerPackages(): Promise<StickerPackage[]> {
      const client = this.requireClient();
@@ -664,7 +820,7 @@ index 58f8902..73e8752 100644
      const result: unknown = await client.base.request.request(
        LINEStruct.getOwnedProductSummaries_args({ shopId: "stickershop", offset: 0, limit: 200, locale: { language: "zh", country: "TW" }, request: {} }),
        "getOwnedProductSummaries",
-@@ -488,6 +522,7 @@ export class EvexLineProvider implements LineProvider {
+@@ -488,6 +543,7 @@ export class EvexLineProvider implements LineProvider {
        true,
        "/TSHOP4",
      );
@@ -672,7 +828,7 @@ index 58f8902..73e8752 100644
      const owned = parseOwnedProducts(result);
      const packages: StickerPackage[] = [];
      for (let offset = 0; offset < owned.length; offset += PACK_META_CONCURRENCY) {
-@@ -497,9 +532,10 @@ export class EvexLineProvider implements LineProvider {
+@@ -497,9 +553,10 @@ export class EvexLineProvider implements LineProvider {
          if (stickerIds.length === 0) return undefined;
          return { packageId: product.packageId, name: meta?.name || product.name || `貼圖包 ${product.packageId}`, stickerIds, animated: meta?.animated ?? false };
        }));
@@ -684,7 +840,7 @@ index 58f8902..73e8752 100644
      return packages;
    }
  
-@@ -509,8 +545,23 @@ export class EvexLineProvider implements LineProvider {
+@@ -509,8 +566,23 @@ export class EvexLineProvider implements LineProvider {
          signal: AbortSignal.timeout(STICKER_TIMEOUT_MS),
          redirect: "error",
        });
@@ -710,7 +866,7 @@ index 58f8902..73e8752 100644
        return text.length > 1_000_000 ? undefined : parsePackageMeta(JSON.parse(text));
      } catch {
        // The id ranges from the product list still give a usable (if untitled) package.
-@@ -564,18 +615,9 @@ export class EvexLineProvider implements LineProvider {
+@@ -564,18 +636,9 @@ export class EvexLineProvider implements LineProvider {
      return bytes && bytes.length > 0 && bytes.length <= this.downloadMaxBytes ? bytes : undefined;
    }
  
@@ -732,7 +888,7 @@ index 58f8902..73e8752 100644
        await response.body?.cancel();
        return undefined;
      }
-@@ -584,13 +626,30 @@ export class EvexLineProvider implements LineProvider {
+@@ -584,13 +647,30 @@ export class EvexLineProvider implements LineProvider {
      let total = 0;
      for (let part = await reader.read(); !part.done; part = await reader.read()) {
        total += part.value.length;
@@ -765,7 +921,7 @@ index 58f8902..73e8752 100644
    }
  
    async fetchReadPositions(channel: ChannelRef): Promise<ReadPosition[]> {
-@@ -615,11 +674,19 @@ export class EvexLineProvider implements LineProvider {
+@@ -615,11 +695,19 @@ export class EvexLineProvider implements LineProvider {
     * the generic member name until the retry delay passes.
     */
    private async resolveMembers(client: Client, source: "talk" | "square", mids: Iterable<string>): Promise<void> {
@@ -790,7 +946,7 @@ index 58f8902..73e8752 100644
      if (pending.length === 0) return;
      const timeout = Promise.withResolvers<void>();
      const timer = setTimeout(timeout.resolve, LOOKUP_TIMEOUT_MS);
-@@ -628,46 +695,131 @@ export class EvexLineProvider implements LineProvider {
+@@ -628,46 +716,131 @@ export class EvexLineProvider implements LineProvider {
      } finally {
        clearTimeout(timer);
      }
@@ -824,14 +980,14 @@ index 58f8902..73e8752 100644
 +        const pending = this.contactLookups.get(mid);
 +        if (pending) waiting.add(pending);
 +        else batch.push(mid);
-+      }
+       }
 +      if (batch.length > 0) {
 +        const pending = this.loadContacts(client, batch).finally(() => {
 +          for (const mid of batch) if (this.contactLookups.get(mid) === pending) this.contactLookups.delete(mid);
 +        });
 +        for (const mid of batch) this.contactLookups.set(mid, pending);
 +        waiting.add(pending);
-       }
++      }
 +      await Promise.all(waiting);
 +    }
 +  }
@@ -938,7 +1094,7 @@ index 58f8902..73e8752 100644
    async fetchHistory(channel: ChannelRef, limit: number, before?: string): Promise<HistoryPage> {
      const client = this.requireClient();
      return channel.kind === "square"
-@@ -717,9 +869,17 @@ export class EvexLineProvider implements LineProvider {
+@@ -717,9 +890,17 @@ export class EvexLineProvider implements LineProvider {
      let end = all.length;
      if (before !== undefined) {
        const match = /^(\d+):(\d{1,24})$/.exec(before);
@@ -959,7 +1115,7 @@ index 58f8902..73e8752 100644
      }
      const start = Math.max(0, end - limit);
      const messages = all.slice(start, end);
-@@ -735,8 +895,8 @@ export class EvexLineProvider implements LineProvider {
+@@ -735,8 +916,8 @@ export class EvexLineProvider implements LineProvider {
    private async loadSquareMessages(client: Client, squareChatMid: string): Promise<Message[]> {
      const cached = this.squareCache.get(squareChatMid);
      if (cached?.loading) return cached.loading;
@@ -970,7 +1126,7 @@ index 58f8902..73e8752 100644
      // Take-backs are permanent; reaction snapshots are not. Only events arriving during this
      // walk override its history statuses, otherwise an expired live snapshot would win forever.
      if (cached) for (const [id, update] of cached.updates) {
-@@ -801,7 +961,7 @@ export class EvexLineProvider implements LineProvider {
+@@ -801,7 +982,7 @@ export class EvexLineProvider implements LineProvider {
      entry.messages.sort((a, b) => this.compareSquareMessages(a, b));
      for (const [id, update] of entry.updates) this.applySquareUpdate(entry, id, update);
      this.boundSquareHistory(entry);
@@ -979,7 +1135,7 @@ index 58f8902..73e8752 100644
      return entry.messages;
    }
  
-@@ -850,10 +1010,14 @@ export class EvexLineProvider implements LineProvider {
+@@ -850,10 +1031,14 @@ export class EvexLineProvider implements LineProvider {
    private rememberSquareMessage(message: Message): void {
      const cached = this.squareCache.get(message.channelId);
      if (!cached) return;
@@ -998,7 +1154,7 @@ index 58f8902..73e8752 100644
      const origin = this.mediaOrigins.get(message.messageId);
      if (origin?.square) cached.origins.set(message.messageId, origin.raw);
      const update = cached.updates.get(message.messageId);
-@@ -992,6 +1156,7 @@ export class EvexLineProvider implements LineProvider {
+@@ -992,6 +1177,7 @@ export class EvexLineProvider implements LineProvider {
    // LINE rejects above 100 mids ("max_size":100). Page it here instead.
    private async fetchFriends(client: Client): Promise<Channel[]> {
      const { userFriendMids } = await client.base.relation.getUserFriendIds({ request: { blockStatus: "ALL" } });
@@ -1006,7 +1162,7 @@ index 58f8902..73e8752 100644
      const batches: string[][] = [];
      for (let offset = 0; offset < (userFriendMids?.length ?? 0); offset += FRIEND_BATCH) batches.push(userFriendMids.slice(offset, offset + FRIEND_BATCH));
      const friends: Channel[] = [];
-@@ -999,6 +1164,7 @@ export class EvexLineProvider implements LineProvider {
+@@ -999,6 +1185,7 @@ export class EvexLineProvider implements LineProvider {
      // and LINE is not hit with every batch at once.
      for (let wave = 0; wave < batches.length; wave += FRIEND_BATCH_CONCURRENCY) {
        const answers = await Promise.all(batches.slice(wave, wave + FRIEND_BATCH_CONCURRENCY).map((mids) => client.base.relation.getContactsV3({ mids })));
@@ -1014,7 +1170,7 @@ index 58f8902..73e8752 100644
        for (const { responses } of answers) {
          for (const contact of responses) {
            const name = contact.friendDetail?.user?.overriddenName || contact.targetProfileDetail?.profileName || UNKNOWN_MEMBER;
-@@ -1017,7 +1183,9 @@ export class EvexLineProvider implements LineProvider {
+@@ -1017,7 +1204,9 @@ export class EvexLineProvider implements LineProvider {
      // Square access is optional (accounts without OpenChat must still list talk chats); all four start at once.
      const squaresLoading = Promise.allSettled([client.fetchJoinedSquares(), client.fetchJoinedSquareChats()]);
      const [chats, friends] = await Promise.all([client.fetchJoinedChats(), this.fetchFriends(client)]);
@@ -1024,7 +1180,7 @@ index 58f8902..73e8752 100644
      const channels: Channel[] = [...friends];
      for (const chat of chats) {
        const type = String(chat.raw.type);
-@@ -1047,6 +1215,7 @@ export class EvexLineProvider implements LineProvider {
+@@ -1047,6 +1236,7 @@ export class EvexLineProvider implements LineProvider {
        }
      }
      await this.attachSummaries(client, channels);
@@ -1032,7 +1188,7 @@ index 58f8902..73e8752 100644
      return channels;
    }
  
-@@ -1056,6 +1225,8 @@ export class EvexLineProvider implements LineProvider {
+@@ -1056,6 +1246,8 @@ export class EvexLineProvider implements LineProvider {
     * happened to receive. Best effort: without a summary the list simply shows no badge or preview.
     */
    private async attachSummaries(client: Client, channels: Channel[]): Promise<void> {
@@ -1041,7 +1197,7 @@ index 58f8902..73e8752 100644
      const counts = new Map<string, number>();
      const activeAt = new Map<string, number>();
      const talkLast = new Map<string, LineMessage>();
-@@ -1063,13 +1234,16 @@ export class EvexLineProvider implements LineProvider {
+@@ -1063,13 +1255,16 @@ export class EvexLineProvider implements LineProvider {
      try {
        const seen = new Set<string>();
        let minChatId: string | undefined;
@@ -1059,7 +1215,7 @@ index 58f8902..73e8752 100644
            counts.set(box.id, Number(box.unreadCount));
            const delivered = Number(box.lastDeliveredMessageId?.deliveredTime);
            if (Number.isFinite(delivered) && delivered > 0) activeAt.set(box.id, delivered);
-@@ -1082,6 +1256,7 @@ export class EvexLineProvider implements LineProvider {
+@@ -1082,6 +1277,7 @@ export class EvexLineProvider implements LineProvider {
      } catch {
        // Talk chats just show no badge or preview this time.
      }
@@ -1067,7 +1223,7 @@ index 58f8902..73e8752 100644
      const squares = channels.filter((channel) => channel.kind === "square");
      for (let offset = 0; offset < squares.length; offset += SQUARE_LOOKUP_CONCURRENCY) {
        await Promise.all(squares.slice(offset, offset + SQUARE_LOOKUP_CONCURRENCY).map(async (channel) => {
-@@ -1096,8 +1271,10 @@ export class EvexLineProvider implements LineProvider {
+@@ -1096,8 +1292,10 @@ export class EvexLineProvider implements LineProvider {
            // This OpenChat shows no badge or preview this time.
          }
        }));
@@ -1078,7 +1234,7 @@ index 58f8902..73e8752 100644
      for (const channel of channels) {
        const count = counts.get(channel.channelId);
        if (count && Number.isFinite(count) && count > 0) channel.unreadCount = Math.min(count, MAX_UNREAD_SHOWN);
-@@ -1125,7 +1302,9 @@ export class EvexLineProvider implements LineProvider {
+@@ -1125,7 +1323,9 @@ export class EvexLineProvider implements LineProvider {
      }
      for (const { raw, name } of squareLast.values()) if (name) this.rememberName(raw.message.from, name);
      await this.resolveMembers(client, "talk", [...decrypted.values()].flatMap((entry) => [entry.raw.from, ...chatEventMids(entry.raw.contentMetadata)]));
@@ -1088,7 +1244,7 @@ index 58f8902..73e8752 100644
      for (const [chatId, entry] of decrypted) {
        try {
          const message = this.talkToMessage(entry.raw, myMid, entry.undecryptable, true);
-@@ -1184,9 +1363,13 @@ export class EvexLineProvider implements LineProvider {
+@@ -1184,9 +1384,13 @@ export class EvexLineProvider implements LineProvider {
      this.client = undefined;
      this.profiles.clear();
      this.lookupMisses.clear();
@@ -1126,6 +1282,18 @@ index 9bdb650..ae6e657 100644
    }
    if (stickerIds.length === 0) return undefined;
    const titles = asRecord(info.title);
+diff --git a/src/main.ts b/src/main.ts
+index 38f5788..3893f44 100644
+--- a/src/main.ts
++++ b/src/main.ts
+@@ -31,6 +31,7 @@ async function main(): Promise<void> {
+     onChecked: (chatId) => hub.handleChecked(chatId),
+     onChatsChanged: () => hub.handleChatsChanged(),
+     onReactions: (chatId, messageId, reactions) => hub.handleReactions(chatId, messageId, reactions),
++    onMemberJoin: (chatId, member) => hub.handleMemberJoin(chatId, member),
+     onStatus: (state) => {
+       console.info(`LINE 狀態：${state}`);
+       hub.setStatus(state);
 diff --git a/src/media/service.ts b/src/media/service.ts
 index a33b88a..c65a235 100644
 --- a/src/media/service.ts
@@ -1171,7 +1339,7 @@ index 9307238..a67a356 100644
  export interface Mention {
    userId: string;
 diff --git a/src/ws/hub.ts b/src/ws/hub.ts
-index 4ae6a53..baf3875 100644
+index 4ae6a53..028bed4 100644
 --- a/src/ws/hub.ts
 +++ b/src/ws/hub.ts
 @@ -12,7 +12,7 @@ import type { Channel, ChannelKind, Message, Reactions, ReadPosition } from "../
@@ -1179,20 +1347,40 @@ index 4ae6a53..baf3875 100644
  import { withMyReaction, type ChatStore } from "../model/store.js";
  import { PROTOCOL_VERSION, type ClientFrame, type ListenState, type ServerFrame } from "./protocol.js";
 -import { parseChatRead, parseHistory, parseMessageRequest, parseReact, parseSend, requestIdOf } from "./requests.js";
-+import { parseChatAdmins, parseChatRead, parseHistory, parseMessageRequest, parseReact, parseSend, requestIdOf } from "./requests.js";
++import { parseAvatarCheck, parseChatAdmins, parseChatRead, parseHistory, parseMessageRequest, parseReact, parseSend, requestIdOf } from "./requests.js";
  
  const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
  const HISTORY_PER_SECOND = 10;
-@@ -82,6 +82,8 @@ const GENERIC = {
+@@ -28,6 +28,8 @@ const HEARTBEAT_MS = 30_000;
+ // burst to settle, and never refresh the whole list from LINE more often than this.
+ const LIST_CHANGE_SETTLE_MS = 3000;
+ const LIST_CHANGE_MIN_GAP_MS = 30_000;
++// Members a bot may ask Jev about: the newest joins announced in this login, oldest dropped first.
++const MAX_ANNOUNCED_JOINS = 500;
+ 
+ export interface HubOptions {
+   server: Server;
+@@ -57,6 +59,8 @@ export interface Hub {
+   handleReactions(chatId: string, messageId: string, reactions: Reactions | undefined): void;
+   /** Names, pictures or members changed somewhere: the list is fetched again (settled and rate limited). */
+   handleChatsChanged(): void;
++  /** Someone joined an OpenChat chat: bots scoped to it are told (never about this account). */
++  handleMemberJoin(chatId: string, member: { userId: string; displayName: string }): void;
+   /** Announces (or clears) the newest known release to everyone connected and to later connections. */
+   setUpdate(info: UpdateInfo | undefined): void;
+   close(): void;
+@@ -82,6 +86,10 @@ const GENERIC = {
    REACT_FAILED: "無法送出回應，請稍後重試。",
    SCAM_CHECK_UNAVAILABLE: "未啟用詐騙訊息分析。",
    SCAM_CHECK_FAILED: "詐騙機率分析失敗，請稍後重試。",
 +  CHAT_ADMINS_UNSUPPORTED: "此聊天室不支援管理員查詢。",
 +  CHAT_ADMINS_FAILED: "無法完整取得管理員資料，請稍後重試。",
++  AVATAR_CHECK_UNAVAILABLE: "未啟用大頭貼分析。",
++  AVATAR_CHECK_FAILED: "大頭貼分析失敗，請稍後重試。",
  } as const;
  
  function updateFrame(info: UpdateInfo): ServerFrame {
-@@ -96,6 +98,7 @@ export function createHub(options: HubOptions): Hub {
+@@ -96,6 +104,7 @@ export function createHub(options: HubOptions): Hub {
    const botSendLimiter = new SlidingWindowLimiter(config.api.sendsPerMinute, 60_000);
    // Shared by every bot connection: several connections must not multiply the paid TypeSafe calls.
    const botScamLimiter = new SlidingWindowLimiter(SCAM_CHECKS_PER_MINUTE, 60_000);
@@ -1200,7 +1388,7 @@ index 4ae6a53..baf3875 100644
    let status: ListenState = "starting";
    let refreshing: Promise<void> | undefined;
    // State can become ready again before an old LINE request settles; "ready" alone is not an account boundary.
-@@ -103,16 +106,20 @@ export function createHub(options: HubOptions): Hub {
+@@ -103,16 +112,22 @@ export function createHub(options: HubOptions): Hub {
    let update: UpdateInfo | undefined;
    let refreshTimer: NodeJS.Timeout | undefined;
    let listChangeTimer: NodeJS.Timeout | undefined;
@@ -1221,10 +1409,12 @@ index 4ae6a53..baf3875 100644
 +  const ownSquareFetches = new Map<string, Promise<void>>();
 +  // Only the requesting socket may mention quiet admins discovered in its scoped lookup.
 +  let botAdminMentions = new WeakMap<WebSocket, Map<string, ReadonlySet<string>>>();
++  // "chatId memberId" of joins announced to bots; only these pictures may be sent to TypeSafe.
++  const announcedJoins = new Set<string>();
    // Sockets that answered the last ping (browsers and the ws client both reply to pings on their own).
    const alive = new WeakSet<WebSocket>();
    const timedOut = new WeakSet<WebSocket>();
-@@ -144,31 +151,38 @@ export function createHub(options: HubOptions): Hub {
+@@ -144,31 +159,38 @@ export function createHub(options: HubOptions): Hub {
    }
  
    function send(socket: WebSocket, frame: ServerFrame): void {
@@ -1273,7 +1463,7 @@ index 4ae6a53..baf3875 100644
    }
  
    function broadcastBots(frame: ServerFrame): void {
-@@ -176,13 +190,14 @@ export function createHub(options: HubOptions): Hub {
+@@ -176,13 +198,14 @@ export function createHub(options: HubOptions): Hub {
    }
  
    /** A bot sees only the chats listed in `api.chats`. */
@@ -1292,7 +1482,7 @@ index 4ae6a53..baf3875 100644
    }
  
    function apiState(): ServerFrame {
-@@ -263,21 +278,26 @@ export function createHub(options: HubOptions): Hub {
+@@ -263,21 +286,26 @@ export function createHub(options: HubOptions): Hub {
  
    async function sendReadSnapshot(socket: WebSocket, chatId: string, kind: ChannelKind): Promise<void> {
      const account = generation;
@@ -1324,7 +1514,7 @@ index 4ae6a53..baf3875 100644
      }
      await fetching;
      if (account !== generation) return;
-@@ -296,10 +316,11 @@ export function createHub(options: HubOptions): Hub {
+@@ -296,10 +324,11 @@ export function createHub(options: HubOptions): Hub {
      if (scope && request.kind !== "text") return fail(socket, "INVALID_REQUEST", request.requestId);
      const target = { channelId: request.chatId, kind: channel.kind };
      if (request.kind === "text") {
@@ -1338,7 +1528,7 @@ index 4ae6a53..baf3875 100644
            return fail(socket, "INVALID_REQUEST", request.requestId);
          }
        }
-@@ -377,6 +398,11 @@ export function createHub(options: HubOptions): Hub {
+@@ -377,6 +406,11 @@ export function createHub(options: HubOptions): Hub {
      }
    }
  
@@ -1350,7 +1540,7 @@ index 4ae6a53..baf3875 100644
    /**
     * The text sent to TypeSafe is the server's own copy of a message it has shown, from someone else:
     * a client cannot use this to send arbitrary text out, or to rate its own messages. Bots are also
-@@ -387,12 +413,32 @@ export function createHub(options: HubOptions): Hub {
+@@ -387,12 +421,32 @@ export function createHub(options: HubOptions): Hub {
      if (!parsed.ok) return fail(socket, "INVALID_REQUEST", parsed.requestId);
      const { requestId, chatId, messageId } = parsed.value;
      if (!scam) return fail(socket, "SCAM_CHECK_UNAVAILABLE", requestId);
@@ -1387,7 +1577,7 @@ index 4ae6a53..baf3875 100644
        const analysis = await scam.analyzeScam(message.text);
        if (account !== generation || login.state !== "ready") return;
        send(socket, { type: "scam:result", requestId, chatId, messageId, analysis });
-@@ -428,8 +474,8 @@ export function createHub(options: HubOptions): Hub {
+@@ -428,8 +482,8 @@ export function createHub(options: HubOptions): Hub {
      const placeholder = store.unsend(messageId, chatHint);
      if (!placeholder) return;
      const frame: ServerFrame = { type: "message:unsend", chatId: placeholder.channelId, messageId };
@@ -1398,7 +1588,7 @@ index 4ae6a53..baf3875 100644
      broadcastChannel(placeholder.channelId, placeholder.channelId === chatHint ? before : undefined);
    }
  
-@@ -443,8 +489,9 @@ export function createHub(options: HubOptions): Hub {
+@@ -443,8 +497,9 @@ export function createHub(options: HubOptions): Hub {
        clearTimeout(refreshTimer);
        refreshTimer = setTimeout(() => { void refreshChannels(); }, NEW_CHANNEL_REFRESH_MS);
      }
@@ -1410,7 +1600,7 @@ index 4ae6a53..baf3875 100644
      // The list entry follows: activity order and preview move with the newest message.
      if (before) broadcastChannel(message.channelId, before);
    }
-@@ -490,6 +537,33 @@ export function createHub(options: HubOptions): Hub {
+@@ -490,6 +545,60 @@ export function createHub(options: HubOptions): Hub {
      }
    }
  
@@ -1441,10 +1631,37 @@ index 4ae6a53..baf3875 100644
 +    }
 +  }
 +
++  /**
++   * Only a member this server itself announced joining may have their picture sent to TypeSafe: a bot
++   * cannot use this to rate arbitrary members or images. The picture is looked up fresh from LINE.
++   */
++  async function handleAvatarCheck(socket: WebSocket, frame: Record<string, unknown>): Promise<void> {
++    const parsed = parseAvatarCheck(frame);
++    if (!parsed.ok) return fail(socket, "INVALID_REQUEST", parsed.requestId);
++    const { requestId, chatId, memberId } = parsed.value;
++    if (!scam) return fail(socket, "AVATAR_CHECK_UNAVAILABLE", requestId);
++    const channel = store.channelOf(chatId);
++    if (login.state !== "ready" || !channel || !botScope.has(chatId)) return fail(socket, "UNKNOWN_CHAT", requestId);
++    if (channel.kind !== "square" || !announcedJoins.has(`${chatId} ${memberId}`)) return fail(socket, "INVALID_REQUEST", requestId);
++    const account = generation;
++    try {
++      const picture = await provider.fetchSquareMemberPicture(memberId);
++      if (account !== generation || login.state !== "ready") return;
++      if (!picture) return send(socket, { type: "avatar:result", requestId, chatId, memberId });
++      const analysis = await scam.analyzeCrown(picture);
++      if (account !== generation || login.state !== "ready") return;
++      send(socket, { type: "avatar:result", requestId, chatId, memberId, analysis });
++    } catch (error) {
++      if (account !== generation) return;
++      logFailure("AVATAR_CHECK_FAILED", error);
++      fail(socket, "AVATAR_CHECK_FAILED", requestId);
++    }
++  }
++
    /** Local only (no LINE request): the profile LINE gave at sign-in. */
    function handleProfile(socket: WebSocket, frame: Record<string, unknown>): void {
      const requestId = requestIdOf(frame);
-@@ -535,7 +609,7 @@ export function createHub(options: HubOptions): Hub {
+@@ -535,7 +644,7 @@ export function createHub(options: HubOptions): Hub {
        // Logged out or failed: nothing from the previous account may stay in memory or on screen.
        generation += 1;
        refreshing = undefined;
@@ -1453,25 +1670,26 @@ index 4ae6a53..baf3875 100644
        clearTimeout(refreshTimer);
        clearTimeout(listChangeTimer);
        store.clear();
-@@ -544,6 +618,8 @@ export function createHub(options: HubOptions): Hub {
+@@ -544,6 +653,9 @@ export function createHub(options: HubOptions): Hub {
        seenReads.clear();
        readFetches.clear();
        ownSquareSenders.clear();
 +      ownSquareFetches.clear();
++      announcedJoins.clear();
 +      botAdminMentions = new WeakMap();
        status = "starting";
      }
      broadcastAll({ type: "auth:state", state });
-@@ -579,7 +655,7 @@ export function createHub(options: HubOptions): Hub {
+@@ -579,7 +691,7 @@ export function createHub(options: HubOptions): Hub {
      watch(socket, "bot");
      const sendLimiter = new SlidingWindowLimiter(config.limits.sendsPerSecond, 1000);
      const historyLimiter = new SlidingWindowLimiter(HISTORY_PER_SECOND, 1000);
 -    send(socket, { type: "hello", protocol: PROTOCOL_VERSION, serverVersion });
-+    send(socket, { type: "hello", protocol: PROTOCOL_VERSION, serverVersion, capabilities: ["chat:admins"] });
++    send(socket, { type: "hello", protocol: PROTOCOL_VERSION, serverVersion, capabilities: ["chat:admins", "member:join"] });
      send(socket, { type: "auth:state", state: login.state });
      send(socket, { type: "status", state: status });
      if (login.state === "ready") {
-@@ -607,6 +683,10 @@ export function createHub(options: HubOptions): Hub {
+@@ -607,6 +719,15 @@ export function createHub(options: HubOptions): Hub {
            if (!botScamLimiter.allow()) fail(socket, "RATE_LIMITED", requestIdOf(frame as Record<string, unknown>));
            else void handleScamCheck(socket, frame as Record<string, unknown>, botScope);
            return;
@@ -1479,10 +1697,31 @@ index 4ae6a53..baf3875 100644
 +          if (!botAdminsLimiter.allow()) fail(socket, "RATE_LIMITED", requestIdOf(frame as Record<string, unknown>));
 +          else void handleChatAdmins(socket, frame as Record<string, unknown>);
 +          return;
++        case "avatar:check":
++          // Paid TypeSafe calls: the same all-bots budget as scam:check.
++          if (!botScamLimiter.allow()) fail(socket, "RATE_LIMITED", requestIdOf(frame as Record<string, unknown>));
++          else void handleAvatarCheck(socket, frame as Record<string, unknown>);
++          return;
          case "profile:get":
            if (!historyLimiter.allow()) fail(socket, "RATE_LIMITED", requestIdOf(frame as Record<string, unknown>));
            else handleProfile(socket, frame as Record<string, unknown>);
-@@ -729,9 +809,9 @@ export function createHub(options: HubOptions): Hub {
+@@ -719,6 +840,15 @@ export function createHub(options: HubOptions): Hub {
+     handleReactions(chatId, messageId, reactions) {
+       if (login.state === "ready") updateReactions(chatId, messageId, reactions);
+     },
++    handleMemberJoin(chatId, member) {
++      if (login.state !== "ready" || !botScope.has(chatId) || store.channelOf(chatId)?.kind !== "square") return;
++      if (member.userId === ownSquareSenders.get(chatId)) return;
++      const key = `${chatId} ${member.userId}`;
++      announcedJoins.delete(key);
++      announcedJoins.add(key);
++      if (announcedJoins.size > MAX_ANNOUNCED_JOINS) announcedJoins.delete(announcedJoins.values().next().value!);
++      broadcastBots({ type: "member:join", chatId, member });
++    },
+     handleChecked(chatId) {
+       const before = store.channelOf(chatId);
+       if (!before || login.state !== "ready") return;
+@@ -729,9 +859,9 @@ export function createHub(options: HubOptions): Hub {
      handleChatsChanged() {
        if (login.state !== "ready") return;
        clearTimeout(listChangeTimer);
@@ -1495,7 +1734,7 @@ index 4ae6a53..baf3875 100644
        }, wait);
      },
 diff --git a/src/ws/protocol.ts b/src/ws/protocol.ts
-index b3745a5..51c3158 100644
+index b3745a5..744e5c4 100644
 --- a/src/ws/protocol.ts
 +++ b/src/ws/protocol.ts
 @@ -1,4 +1,4 @@
@@ -1513,28 +1752,34 @@ index b3745a5..51c3158 100644
    /** A newer release exists on GitHub. Public information only; sent to every connection, signed in or not. */
    | { type: "update:available"; version: string; current: string; url: string }
    | { type: "auth:state"; state: AuthState }
-@@ -15,6 +15,7 @@ export type ServerFrame =
+@@ -15,6 +15,11 @@ export type ServerFrame =
    | { type: "auth:ready"; profile: Profile }
    /** Answer to `profile:get`, only to the connection that asked: the same profile `auth:ready` carries. */
    | { type: "profile"; requestId: string; profile: Profile }
 +  | { type: "chat:admins"; requestId: string; chatId: string; admins: Admin[]; ownMemberId: string }
++  /** Someone joined an OpenChat chat in `api.chats` (bots only; never this account). `displayName` is "" when LINE sent none. */
++  | { type: "member:join"; chatId: string; member: { userId: string; displayName: string } }
++  /** Answer to `avatar:check`, only to the bot that asked; no `analysis` when the member has no picture. */
++  | { type: "avatar:result"; requestId: string; chatId: string; memberId: string; analysis?: { probability: number } }
    | { type: "channels"; channels: Channel[] }
    /** One chat changed (new activity, its preview, its badge): pages only, bots keep the plain message stream. */
    | { type: "channel"; channel: Channel }
-@@ -59,6 +60,8 @@ export type ClientFrame =
+@@ -59,6 +64,10 @@ export type ClientFrame =
    | { type: "scam:check"; requestId: string; chatId: string; messageId: string }
    /** This account's own id, name and picture, on demand (pages and bots alike). */
    | { type: "profile:get"; requestId: string }
 +  /** Fresh, complete current OpenChat administrators and this account's member identity (bots only). */
 +  | { type: "chat:admins:get"; requestId: string; chatId: string }
++  /** Jev's chance that a member announced by `member:join` shows a crown in their current picture (bots only). */
++  | { type: "avatar:check"; requestId: string; chatId: string; memberId: string }
    | { type: "stickers:list"; requestId: string }
    | { type: "api:token:create"; requestId?: string }
    | { type: "api:token:revoke"; requestId?: string }
 diff --git a/src/ws/requests.ts b/src/ws/requests.ts
-index 31fd7a2..9518ee1 100644
+index 31fd7a2..6a7f22e 100644
 --- a/src/ws/requests.ts
 +++ b/src/ws/requests.ts
-@@ -42,6 +42,11 @@ export function requestIdOf(frame: Record<string, unknown>): string | undefined
+@@ -42,6 +42,20 @@ export function requestIdOf(frame: Record<string, unknown>): string | undefined
    return typeof frame.requestId === "string" && REQUEST_ID.test(frame.requestId) ? frame.requestId : undefined;
  }
  
@@ -1543,11 +1788,20 @@ index 31fd7a2..9518ee1 100644
 +  return base ? { ok: true, value: base } : { ok: false, ...(requestIdOf(frame) ? { requestId: requestIdOf(frame)! } : {}) };
 +}
 +
++export function parseAvatarCheck(frame: Record<string, unknown>): Parsed<{ requestId: string; chatId: string; memberId: string }> {
++  const base = header(frame);
++  if (!base) return { ok: false, ...(requestIdOf(frame) ? { requestId: requestIdOf(frame)! } : {}) };
++  const { memberId } = frame;
++  // Only OpenChat member mids: joins are announced for OpenChat alone.
++  if (typeof memberId !== "string" || !MEMBER_ID.test(memberId) || !memberId.startsWith("p")) return { ok: false, requestId: base.requestId };
++  return { ok: true, value: { ...base, memberId } };
++}
++
  export function parseHistory(frame: Record<string, unknown>, defaultLimit: number): Parsed<HistoryRequest> {
    const base = header(frame);
    if (!base) return { ok: false, ...(requestIdOf(frame) ? { requestId: requestIdOf(frame)! } : {}) };
 diff --git a/test/hub.test.mjs b/test/hub.test.mjs
-index e3ebc41..4df086f 100644
+index e3ebc41..b34a548 100644
 --- a/test/hub.test.mjs
 +++ b/test/hub.test.mjs
 @@ -5,6 +5,7 @@ import { createServer } from "node:net";
@@ -1906,7 +2160,7 @@ index e3ebc41..4df086f 100644
  test("a newer release is announced to every client, including ones that connect later and are not signed in", async (t) => {
    const { port, cookie, hub } = await start(t, { restore: false });
    const headers = { Origin: `http://127.0.0.1:${port}`, Cookie: cookie };
-@@ -1571,3 +1871,376 @@ test("a connection that stops answering pings is closed by the next heartbeat; o
+@@ -1571,3 +1871,449 @@ test("a connection that stops answering pings is closed by the next heartbeat; o
    assert.equal(healthy.socket.readyState, WebSocket.OPEN);
    assert.equal(pings, 2);
  });
@@ -2283,6 +2537,121 @@ index e3ebc41..4df086f 100644
 +    });
 +  }
 +});
++
++const JOINER = `p${"7".repeat(32)}`;
++
++test("member joins reach only bots scoped to that OpenChat, never pages, other chats or this account", async (t) => {
++  const env = await adminEnv(t);
++  const bot = await env.open();
++  assert.ok((await bot.until((f) => f.type === "hello")).capabilities.includes("member:join"));
++  bot.socket.send(JSON.stringify({ type: "chat:admins:get", requestId: "identity", chatId: ADMIN_CHAT }));
++  await bot.until((f) => f.type === "chat:admins");
++  env.hub.handleMemberJoin(ADMIN_OTHER, { userId: JOINER, displayName: "管理員" });
++  env.hub.handleMemberJoin(CHAT, { userId: JOINER, displayName: "管理員" });
++  env.hub.handleMemberJoin(ADMIN_CHAT, { userId: OWN_SQUARE_MEMBER, displayName: "我" });
++  env.hub.handleMemberJoin(ADMIN_CHAT, { userId: JOINER, displayName: "群管小幫手" });
++  assert.deepEqual(await bot.until((f) => f.type === "member:join"), { type: "member:join", chatId: ADMIN_CHAT, member: { userId: JOINER, displayName: "群管小幫手" } });
++  await delay(30);
++  assert.equal(bot.frames.filter((f) => f.type === "member:join").length, 1);
++  assert.equal(env.page.frames.some((f) => f.type === "member:join"), false);
++});
++
++test("avatar checks send only an announced joiner's fresh picture to Jev and drop results after logout", async (t) => {
++  const crowns = [];
++  let release;
++  const env = await adminEnv(t, {
++    async analyzeScam() { throw new Error("unused"); },
++    async analyzeCrown(image) { crowns.push(image); if (crowns.length === 2) await new Promise((resolve) => { release = resolve; }); return { probability: 0.91 }; },
++  });
++  const pictures = [];
++  env.provider.fetchSquareMemberPicture = async (memberId) => {
++    pictures.push(memberId);
++    return memberId === JOINER ? { mime: "image/jpeg", bytes: Buffer.from([0xff, 0xd8, 0xff]) } : undefined;
++  };
++  const bot = await env.open();
++  const check = async (requestId, chatId, memberId) => {
++    bot.socket.send(JSON.stringify({ type: "avatar:check", requestId, chatId, memberId }));
++    return bot.until((f) => f.requestId === requestId);
++  };
++  assert.equal((await check("unannounced", ADMIN_CHAT, JOINER)).code, "INVALID_REQUEST");
++  env.hub.handleMemberJoin(ADMIN_OTHER, { userId: JOINER, displayName: "" });
++  assert.equal((await check("other", ADMIN_OTHER, JOINER)).code, "UNKNOWN_CHAT");
++  assert.equal((await check("talk-id", ADMIN_CHAT, `u${"7".repeat(32)}`)).code, "INVALID_REQUEST");
++  assert.deepEqual(pictures, []);
++  env.hub.handleMemberJoin(ADMIN_CHAT, { userId: JOINER, displayName: "" });
++  assert.deepEqual(await check("crown", ADMIN_CHAT, JOINER), { type: "avatar:result", requestId: "crown", chatId: ADMIN_CHAT, memberId: JOINER, analysis: { probability: 0.91 } });
++  assert.equal(crowns[0].mime, "image/jpeg");
++  const plain = `p${"8".repeat(32)}`;
++  env.hub.handleMemberJoin(ADMIN_CHAT, { userId: plain, displayName: "" });
++  assert.deepEqual(await check("none", ADMIN_CHAT, plain), { type: "avatar:result", requestId: "none", chatId: ADMIN_CHAT, memberId: plain });
++  bot.socket.send(JSON.stringify({ type: "avatar:check", requestId: "stale", chatId: ADMIN_CHAT, memberId: JOINER }));
++  while (!release) await delay(5);
++  await env.login.logout();
++  release();
++  await delay(30);
++  assert.equal(bot.frames.some((f) => f.requestId === "stale" && f.type === "avatar:result"), false);
++});
++
++test("avatar checks are unavailable without Jev and share the all-bots paid-check budget with scam checks", async (t) => {
++  const none = await adminEnv(t);
++  const plainBot = await none.open();
++  none.hub.handleMemberJoin(ADMIN_CHAT, { userId: JOINER, displayName: "" });
++  plainBot.socket.send(JSON.stringify({ type: "avatar:check", requestId: "off", chatId: ADMIN_CHAT, memberId: JOINER }));
++  assert.equal((await plainBot.until((f) => f.requestId === "off")).code, "AVATAR_CHECK_UNAVAILABLE");
++
++  let crowns = 0;
++  const env = await adminEnv(t, { async analyzeScam() { return { probability: 0 }; }, async analyzeCrown() { crowns += 1; return { probability: 0.1 }; } });
++  env.provider.fetchSquareMemberPicture = async () => ({ mime: "image/png", bytes: Buffer.from([1]) });
++  const bots = [await env.open(), await env.open()];
++  env.hub.handleMemberJoin(ADMIN_CHAT, { userId: JOINER, displayName: "" });
++  for (let n = 0; n < 10; n += 1) bots[n % 2].socket.send(JSON.stringify({ type: "scam:check", requestId: `s${n}`, chatId: ADMIN_CHAT, messageId: "1" }));
++  for (let n = 0; n < 10; n += 1) await bots[n % 2].until((f) => f.requestId === `s${n}`);
++  bots[1].socket.send(JSON.stringify({ type: "avatar:check", requestId: "over", chatId: ADMIN_CHAT, memberId: JOINER }));
++  assert.equal((await bots[1].until((f) => f.requestId === "over")).code, "RATE_LIMITED");
++  assert.equal(crowns, 0);
++});
+diff --git a/test/jev.test.mjs b/test/jev.test.mjs
+index 32ca615..349a851 100644
+--- a/test/jev.test.mjs
++++ b/test/jev.test.mjs
+@@ -50,3 +50,37 @@ test("an HTTP failure reports the status only, never the response body or the to
+   const huge = new JevClient({ token: "t", model: "m", fetchImpl: async () => new Response("x".repeat(70 * 1024)) });
+   await assert.rejects(huge.analyzeScam("x"), /size/);
+ });
++
++test("a profile picture goes to TypeSafe as one referenced image asset behind the image opt-in header", async () => {
++  const { calls, fetchImpl } = fakeFetch(() => json({ answers: { crown: { type: "noul", noul: 0.88 } } }));
++  const client = new JevClient({ token: "ts_secret", model: "jev-1.14.0", fetchImpl });
++  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
++  assert.deepEqual(await client.analyzeCrown({ mime: "image/png", bytes: png }), { probability: 0.88 });
++  await client.analyzeCrown({ mime: "image/jpeg", bytes: Buffer.from([0xff, 0xd8, 0xff]) });
++  const [{ init, body }, second] = calls;
++  assert.equal(init.headers["TypeSafe-Danger-Zone-Images"], "true");
++  assert.equal(init.headers.Authorization, "Bearer ts_secret");
++  assert.equal(init.redirect, "error");
++  const [reference] = Object.keys(body.assets);
++  assert.equal(body.state.avatar, reference, "the only asset is referenced from the state");
++  assert.deepEqual(body.assets[reference], { type: "image", format: "png", data_base64: png.toString("base64") });
++  assert.equal(body.questions.crown.type, "noul");
++  assert.equal(Object.values(second.body.assets)[0].format, "jpg");
++  assert.notEqual(Object.keys(second.body.assets)[0], reference, "each request gets a fresh reference");
++  const text = calls.length;
++  await assert.rejects(new JevClient({ token: "t", model: "m", fetchImpl }).analyzeScam("x"), /shape/);
++  assert.equal(calls[text].init.headers["TypeSafe-Danger-Zone-Images"], undefined, "text checks stay off the image tier");
++});
++
++test("crown checks send nothing for formats TypeSafe cannot read and fail closed on unreadable answers", async () => {
++  const { calls, fetchImpl } = fakeFetch(() => json({ answers: { crown: { noul: 0.5 } } }));
++  const client = new JevClient({ token: "t", model: "m", fetchImpl });
++  for (const image of [{ mime: "image/gif", bytes: Buffer.from("GIF89a") }, { mime: "image/webp", bytes: Buffer.from("RIFF") }, { mime: "image/png", bytes: Buffer.alloc(0) }]) {
++    await assert.rejects(client.analyzeCrown(image), /format/);
++  }
++  assert.equal(calls.length, 0);
++  for (const answers of [undefined, {}, { crown: { noul: 1.5 } }, { scam: { noul: 0.9 } }]) {
++    const bad = new JevClient({ token: "t", model: "m", fetchImpl: async () => json({ answers }) });
++    await assert.rejects(bad.analyzeCrown({ mime: "image/png", bytes: Buffer.from([1]) }), /shape/, JSON.stringify(answers));
++  }
++});
 diff --git a/test/media.test.mjs b/test/media.test.mjs
 index 3137b0f..89d18f0 100644
 --- a/test/media.test.mjs
@@ -2308,7 +2677,7 @@ index 3137b0f..89d18f0 100644
 +  assert.equal(media.getUpload(id), undefined);
 +});
 diff --git a/test/provider.test.mjs b/test/provider.test.mjs
-index 3dae4b2..8fe3a2a 100644
+index 3dae4b2..7328652 100644
 --- a/test/provider.test.mjs
 +++ b/test/provider.test.mjs
 @@ -17,6 +17,8 @@ function fakeBase(overrides = {}) {
@@ -2320,7 +2689,7 @@ index 3dae4b2..8fe3a2a 100644
      talk: {
        async getContactsV2({ mids }) { return { contacts: Object.fromEntries(mids.map((m) => [m, { contact: { mid: m, displayName: `名-${m.slice(-3)}` } }])) }; },
        async getMessageBoxes() { return { messageBoxes: [], hasNext: false }; },
-@@ -28,16 +30,16 @@ function fakeBase(overrides = {}) {
+@@ -28,26 +30,48 @@ function fakeBase(overrides = {}) {
    };
  }
  
@@ -2330,17 +2699,23 @@ index 3dae4b2..8fe3a2a 100644
    const errors = [];
    const reactions = [];
 -  const storage = { async flush() {}, async get() {}, async set() {} };
++  const joins = [];
 +  const storage = { async flush() {}, async get() {}, async set() {}, async clear() {} };
    const provider = new EvexLineProvider(storage, "DESKTOPWIN", {
      onMessage: (message, kind) => received.push({ message, kind }),
      onRead() {}, onStatus() {}, onError: (code) => errors.push(code),
      onReactions: (...args) => reactions.push(args),
 -  });
++    onMemberJoin: (...args) => joins.push(args),
 +  }, undefined, downloadMaxBytes);
    // Listening would start real polling; the tests emit events themselves.
    provider.listen = () => {};
    provider.base = base;
-@@ -48,6 +50,26 @@ async function activeProvider(base, client = {}) {
+   await provider.activate(base);
+   Object.assign(provider.client, client);
+-  return { provider, received, errors, reactions, emit: (...args) => provider.client.emit(...args) };
++  return { provider, received, errors, reactions, joins, emit: (...args) => provider.client.emit(...args) };
+ }
  
  const talk = (id, to, from, text, extra = {}) => ({ raw: { id, to, from, toType: "GROUP", contentType: "NONE", text, createdTime: String(1_700_000_000_000 + Number(id)), contentMetadata: {}, ...extra } });
  
@@ -2367,7 +2742,7 @@ index 3dae4b2..8fe3a2a 100644
  test("a slow member lookup holds back only its own chat; each chat keeps arrival order", async () => {
    let release;
    const gate = new Promise((resolve) => { release = resolve; });
-@@ -72,6 +94,479 @@ test("a slow member lookup holds back only its own chat; each chat keeps arrival
+@@ -72,6 +96,479 @@ test("a slow member lookup holds back only its own chat; each chat keeps arrival
    assert.equal(received[1].message.senderName, `名-${slow.slice(-3)}`);
  });
  
@@ -2847,7 +3222,7 @@ index 3dae4b2..8fe3a2a 100644
  test("a message the hub fails on does not stop later deliveries in that chat", async () => {
    const base = fakeBase();
    const received = [];
-@@ -124,6 +619,120 @@ test("friends are fetched in batches of 100, a few at a time, in LINE's order",
+@@ -124,6 +621,120 @@ test("friends are fetched in batches of 100, a few at a time, in LINE's order",
    assert.deepEqual(channels.map((channel) => channel.channelId), friends);
  });
  
@@ -2968,7 +3343,7 @@ index 3dae4b2..8fe3a2a 100644
  test("the chat list carries LINE's unread count, activity time and last message; E2EE previews decrypt once and register no media", async () => {
    const at = (n) => String(1_700_000_000_000 + n);
    let boxRequests = 0;
-@@ -176,6 +785,93 @@ test("the chat list carries LINE's unread count, activity time and last message;
+@@ -176,6 +787,93 @@ test("the chat list carries LINE's unread count, activity time and last message;
    assert.equal(decrypts, 1, "the same last message is not decrypted again on the next refresh");
  });
  
@@ -3062,7 +3437,7 @@ index 3dae4b2..8fe3a2a 100644
  test("OpenChat history stays current with live and own messages without walking LINE's events again", async () => {
    let walks = 0;
    const event = (id, text) => ({ payload: { receiveMessage: { squareMessage: { message: { id, to: SQUARE, from: "p-member", contentType: "NONE", text, createdTime: String(1_700_000_000_000 + Number(id)), contentMetadata: {} } }, senderDisplayName: "社群成員" } } });
-@@ -407,6 +1103,350 @@ test("received stickers become sticker media ids only for numeric ids; animated
+@@ -407,6 +1105,350 @@ test("received stickers become sticker media ids only for numeric ids; animated
    ]);
  });
  
@@ -3413,7 +3788,7 @@ index 3dae4b2..8fe3a2a 100644
  test("a received file becomes a download with a safe name; it is never served as inline media and a preview or taken-back file is not fetchable", async () => {
    const downloads = [];
    const base = fakeBase();
-@@ -501,7 +1541,9 @@ test("OpenChat concurrent history shares the walk and retains interleaved live d
+@@ -501,7 +1543,9 @@ test("OpenChat concurrent history shares the walk and retains interleaved live d
    assert.equal(await provider.fetchMessageMedia("11"), undefined);
  });
  
@@ -3424,7 +3799,7 @@ index 3dae4b2..8fe3a2a 100644
    let walks = 0;
    const other = "m" + "t".repeat(32);
    const base = fakeBase({ square: {
-@@ -518,12 +1560,94 @@ test("OpenChat paging survives an earlier live delivery and cache refresh; chats
+@@ -518,12 +1562,94 @@ test("OpenChat paging survives an earlier live delivery and cache refresh; chats
    await settle();
    const older = await provider.fetchHistory(channel, 2, newest.cursor);
    assert.deepEqual(older.messages.map((message) => message.messageId), ["1", "2"]);
@@ -3520,7 +3895,7 @@ index 3dae4b2..8fe3a2a 100644
  test("OpenChat walks deduplicate events, consume retained mutations, and authorize media only on the displayed page", async () => {
    const base = fakeBase({ square: {
      async fetchSquareChatEvents() {
-@@ -565,7 +1689,9 @@ test("OpenChat an invalidated in-flight walk cannot refill history or media afte
+@@ -565,7 +1691,9 @@ test("OpenChat an invalidated in-flight walk cannot refill history or media afte
    assert.equal(provider.mediaOrigins.size, 0);
  });
  
@@ -3531,7 +3906,7 @@ index 3dae4b2..8fe3a2a 100644
    const base = fakeBase({ square: {
      async fetchSquareChatEvents() { return { events: [squareEvent(1), squareEvent(2, SQUARE, "IMAGE")] }; },
      async getSquareMember() { return { squareMember: { displayName: "成員" } }; },
-@@ -580,7 +1706,7 @@ test("OpenChat own reaction changes and take-backs remain correct on the next ca
+@@ -580,7 +1708,7 @@ test("OpenChat own reaction changes and take-backs remain correct on the next ca
    assert.deepEqual((await provider.fetchHistory(channel, 50)).messages[0].reactions, { counts: { LOVE: 1 }, mine: "LOVE" });
    await provider.react(channel, "1", undefined);
    await provider.unsendMessage(channel, "2");
@@ -3540,7 +3915,7 @@ index 3dae4b2..8fe3a2a 100644
    const page = await provider.fetchHistory(channel, 50);
    assert.equal(page.messages[0].reactions, undefined);
    assert.equal(page.messages[1].unsent, true);
-@@ -621,7 +1747,9 @@ test("OpenChat live history remains bounded without shifting message-anchored cu
+@@ -621,7 +1749,9 @@ test("OpenChat live history remains bounded without shifting message-anchored cu
    assert.deepEqual((await provider.fetchHistory(channel, 2, latest.cursor)).messages.map((message) => message.messageId), ["5007", "5008"]);
  });
  
@@ -3551,7 +3926,7 @@ index 3dae4b2..8fe3a2a 100644
    let refreshed = false;
    let release;
    const gate = new Promise((resolve) => { release = resolve; });
-@@ -641,7 +1769,7 @@ test("OpenChat TTL refresh replaces old live reactions with current history whil
+@@ -641,7 +1771,7 @@ test("OpenChat TTL refresh replaces old live reactions with current history whil
    await provider.fetchHistory(channel, 50);
    emit("square:event", squareStatus(1, { 1: 2, 2: { 3: 2 } }));
    emit("square:event", squareStatus(2, { 1: 1, 2: { 3: 1 } }));
@@ -3560,7 +3935,7 @@ index 3dae4b2..8fe3a2a 100644
    refreshed = true;
    const refreshing = provider.fetchHistory(channel, 50);
    emit("square:event", squareStatus(2, { 1: 0, 2: {} }));
-@@ -650,3 +1778,78 @@ test("OpenChat TTL refresh replaces old live reactions with current history whil
+@@ -650,3 +1780,106 @@ test("OpenChat TTL refresh replaces old live reactions with current history whil
    assert.deepEqual(page.messages[0].reactions, { counts: { LOVE: 3 } }, "history replaces reactions from before this refresh");
    assert.equal(page.messages[1].reactions, undefined, "live removal during refresh still overrides the walked snapshot");
  });
@@ -3638,6 +4013,34 @@ index 3dae4b2..8fe3a2a 100644
 +  provider.client = undefined;
 +  release();
 +  await assert.rejects(pending, /STALE_SESSION/);
++});
++
++test("OpenChat joins report the joined member, and the crown check reads the member's current picture", async (t) => {
++  const joiner = `p${"7".repeat(32)}`;
++  const lookups = [];
++  let hash = "0hNEWPICTURE";
++  const base = fakeBase({ square: { async getSquareMember({ squareMemberMid }) { lookups.push(squareMemberMid); return { squareMember: { displayName: "群管", profileImageObsHash: hash } }; } } });
++  const { provider, joins, emit } = await activeProvider(base);
++  const member = (fields) => ({ squareChatMid: SQUARE, joinedMember: { squareMemberMid: joiner, squareMid: "s1", displayName: "管理員Amy", profileImageObsHash: "0hOLD", membershipState: "JOINED", role: "MEMBER", ...fields } });
++  emit("square:event", { type: "NOTIFIED_JOIN_SQUARE_CHAT", payload: { notifiedJoinSquareChat: member() } });
++  emit("square:event", { type: 2, payload: { notifiedJoinSquareChat: member({ displayName: undefined }) } });
++  emit("square:event", { type: 2, payload: { notifiedJoinSquareChat: member({ squareMemberMid: "../x" }) } });
++  emit("square:event", { type: 2, payload: {} });
++  assert.deepEqual(joins, [[SQUARE, { userId: joiner, displayName: "管理員Amy" }], [SQUARE, { userId: joiner, displayName: "" }]]);
++
++  const fetched = [];
++  t.mock.method(globalThis, "fetch", async (url) => {
++    fetched.push(String(url));
++    return new Response(new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2]), { headers: { "Content-Type": "image/jpeg" } });
++  });
++  const picture = await provider.fetchSquareMemberPicture(joiner);
++  assert.equal(picture.mime, "image/jpeg");
++  assert.deepEqual(fetched, ["https://obs.line-scdn.net/0hNEWPICTURE/preview"], "the picture now shown, not the one at join time");
++  hash = "";
++  assert.equal(await provider.fetchSquareMemberPicture(joiner), undefined);
++  assert.deepEqual(lookups, [joiner, joiner]);
++  assert.equal(fetched.length, 1);
++  await provider.close();
 +});
 diff --git a/test/requests.test.mjs b/test/requests.test.mjs
 index 6002369..620af34 100644
