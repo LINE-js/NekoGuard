@@ -2,6 +2,7 @@ import { parseArgs } from "node:util";
 import { ApiClient } from "./client.js";
 import { loadConfig } from "./config.js";
 import { ScamGuard, type AlertEvent } from "./guard.js";
+import { CrownChecker } from "./jev.js";
 
 async function main(): Promise<void> {
   const { values } = parseArgs({ options: { config: { type: "string", default: "config.yaml" }, help: { type: "boolean" } } });
@@ -18,6 +19,7 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
+  const crownChecker = config.jev ? new CrownChecker(config.jev) : undefined;
   let stopped = false;
   let retryTimer: NodeJS.Timeout | undefined;
   let closeSession = () => {};
@@ -37,6 +39,7 @@ async function main(): Promise<void> {
     const guard = new ScamGuard(client, {
       thresholdPercent: config.detection.thresholdPercent,
       crownThresholdPercent: config.detection.crownThresholdPercent,
+      ...(crownChecker ? { crown: (hash: string) => crownChecker.check(hash) } : {}),
     });
     let closed = false;
     const helloDeadline = setTimeout(() => retry("LINEJS_HELLO_TIMEOUT"), 25_000);

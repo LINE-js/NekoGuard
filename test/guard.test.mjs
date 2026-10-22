@@ -750,3 +750,56 @@ test('joins share the paid-check pacing with scam checks, and a rejoin or accoun
   await paced.guard.whenIdle();
   assert.equal(paced.calls.some(call => call.type === 'avatar:check'), false);
 });
+
+test('newer LINE.js chat:member-joined frames are checked: the reported name alerts and the picture is judged locally', async () => {
+  const hash = '0hlU0hKiRrM3oNES_EmNxMLTJHblR8dSh_ZTRiXSkZa0gidHMsYyJ7SyAZbxggJyF5N3F_GS0Za010JSYq';
+  const upstream = (member) => ({ type: 'chat:member-joined', chatId, member: { userId: joinerId, ...member } });
+  const judged = [];
+  const h = harness({ capabilities: ['chat:admins', 'chat:admin-token', 'chat:member-joined'] });
+  // Rebuild with a local crown checker, as main.ts does when jev.token is configured.
+  const { ScamGuard: Guard } = await import('../dist/guard.js');
+  const sends = [];
+  const api = { async request(type, fields) {
+    if (type === 'chat:admins:get') return { type: 'chat:admins', chatId: fields.chatId, ownMemberId: ownId, admins: [admin] };
+    if (type === 'message:send') { sends.push(fields); return { type: 'sent', messageId: '1' }; }
+    throw new Error(`unexpected ${type}`);
+  } };
+  const guard = new Guard(api, { thresholdPercent: 70, crownThresholdPercent: 70, checkIntervalMs: 0, sendIntervalMs: 0, adminIntervalMs: 0, crown: async (pictureHash) => { judged.push(pictureHash); return 0.9; } });
+  guard.handle({ type: 'hello', protocol: 2, capabilities: ['chat:admins', 'chat:admin-token', 'chat:member-joined'] });
+  guard.handle({ type: 'auth:ready', profile: { userId } });
+  guard.handle({ type: 'channels', channels: [{ channelId: chatId, kind: 'square' }] });
+  guard.handle(upstream({ displayName: '\uFFFC管管-星語', pictureId: `avatar-o-${hash}` }));
+  await guard.whenIdle();
+  assert.deepEqual(judged, [hash]);
+  assert.equal(sends.length, 1);
+  assert.ok(sends[0].text.includes('90%（達門檻）') && sends[0].text.includes('名稱含管理員相關字詞：是'));
+
+  // Without a local key: no avatar:check request to a backend that lacks it, the name still alerts.
+  assert.ok(h.notices.includes('CROWN_CHECK_DISABLED'));
+  h.guard.handle(upstream({ displayName: '\uFFFC管管-星語', pictureId: `avatar-o-${hash}` }));
+  await h.guard.whenIdle();
+  assert.equal(h.calls.some(call => call.type === 'avatar:check'), false);
+  assert.equal(h.sends.length, 1);
+  assert.ok(h.sends[0].text.includes('未能判定'));
+});
+
+test('a joiner without a picture is not sent for judging and is reported as having none', async () => {
+  const judged = [];
+  const { ScamGuard: Guard } = await import('../dist/guard.js');
+  const sends = [];
+  const api = { async request(type, fields) {
+    if (type === 'chat:admins:get') return { type: 'chat:admins', chatId: fields.chatId, ownMemberId: ownId, admins: [admin] };
+    if (type === 'message:send') { sends.push(fields); return { type: 'sent', messageId: '1' }; }
+    throw new Error(`unexpected ${type}`);
+  } };
+  const guard = new Guard(api, { thresholdPercent: 70, crownThresholdPercent: 70, checkIntervalMs: 0, sendIntervalMs: 0, adminIntervalMs: 0, crown: async (hash) => { judged.push(hash); return 1; } });
+  guard.handle({ type: 'hello', protocol: 2, capabilities: ['chat:admins', 'chat:member-joined'] });
+  guard.handle({ type: 'auth:ready', profile: { userId } });
+  guard.handle({ type: 'channels', channels: [{ channelId: chatId, kind: 'square' }] });
+  guard.handle({ type: 'chat:member-joined', chatId, member: { userId: joinerId, displayName: '群管' } });
+  guard.handle({ type: 'chat:member-joined', chatId, member: { userId: 'p' + 'f'.repeat(32), displayName: '小明', pictureId: 'avatar-o-../../etc' } });
+  await guard.whenIdle();
+  assert.deepEqual(judged, [], 'a malformed picture id is never fetched');
+  assert.equal(sends.length, 1);
+  assert.ok(sends[0].text.includes('沒有大頭貼'));
+});

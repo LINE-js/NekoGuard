@@ -83,3 +83,23 @@ test('does not leak YAML source or invalid credentials in errors', async () => {
     await assert.rejects(loadConfig(path), (error) => !error.message.includes('TOP-SECRET'));
   });
 });
+
+test('the TypeSafe key is optional, environment-overridable and validated without echoing it', async () => {
+  const previous = process.env.NEKOGUARD_JEV_TOKEN;
+  delete process.env.NEKOGUARD_JEV_TOKEN;
+  try {
+    await withConfig(yaml(), async (path) => assert.equal((await loadConfig(path)).jev, undefined));
+    await withConfig(`${yaml()}jev:\n  token: ts_file\n`, async (path) => {
+      assert.deepEqual((await loadConfig(path)).jev, { token: 'ts_file', model: 'jev-1.13.0' });
+      process.env.NEKOGUARD_JEV_TOKEN = 'ts_env';
+      assert.equal((await loadConfig(path)).jev.token, 'ts_env');
+      delete process.env.NEKOGUARD_JEV_TOKEN;
+    });
+    await withConfig(`${yaml()}jev:\n  token: "ts secret"\n`, async (path) => {
+      await assert.rejects(loadConfig(path), (error) => /jev\.token/.test(error.message) && !error.message.includes('secret'));
+    });
+  } finally {
+    if (previous === undefined) delete process.env.NEKOGUARD_JEV_TOKEN;
+    else process.env.NEKOGUARD_JEV_TOKEN = previous;
+  }
+});

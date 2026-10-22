@@ -31,6 +31,8 @@ interface Notification {
 interface GuardOptions {
   thresholdPercent: number;
   crownThresholdPercent: number;
+  /** Judges a picture by its OpenChat CDN hash when the backend cannot; null means no picture. */
+  crown?: (pictureHash: string) => Promise<number | null>;
   /** Test clock seams; production observes LINE.js's shared 10 checks/minute and 20 sends/minute. */
   checkIntervalMs?: number;
   sendIntervalMs?: number;
@@ -45,6 +47,7 @@ export class ScamGuard extends EventEmitter {
   private ready = false;
   private supported = false;
   private joinsSupported = false;
+  private avatarViaBackend = false;
   private joinSequence = 0;
   private userId?: string;
   private generation = 0;
@@ -72,9 +75,13 @@ export class ScamGuard extends EventEmitter {
       this.reset();
       this.supported = frame.protocol === 2 && Array.isArray(frame.capabilities) && frame.capabilities.includes("chat:admins");
       if (!this.supported) this.emit("fatal", "LINEJS_ADMIN_EXTENSION_REQUIRED");
-      this.joinsSupported = this.supported && (frame.capabilities as unknown[]).includes("member:join");
+      const capabilities = frame.capabilities as unknown[];
+      // The NekoGuard patch also judges pictures; newer LINE.js only announces joins.
+      this.avatarViaBackend = this.supported && capabilities.includes("member:join");
+      this.joinsSupported = this.avatarViaBackend || (this.supported && capabilities.includes("chat:member-joined"));
       // Scam monitoring still works against an older extension; only join checks are unavailable.
       if (this.supported && !this.joinsSupported) this.emit("notice", "LINEJS_MEMBER_JOIN_EXTENSION_REQUIRED");
+      else if (this.joinsSupported && !this.avatarViaBackend && !this.options.crown) this.emit("notice", "CROWN_CHECK_DISABLED");
       return;
     }
     if (frame.type === "auth:state" && frame.state !== "ready") {
@@ -123,7 +130,7 @@ export class ScamGuard extends EventEmitter {
       }
       return;
     }
-    if (frame.type === "member:join") {
+    if (frame.type === "member:join" || frame.type === "chat:member-joined") {
       const member = parseJoin(frame);
       if (!member || !this.ready || !this.joinsSupported || !this.channels.has(member.chatId)
         || member.userId === this.ownMembers.get(member.chatId)) return;
@@ -320,15 +327,29 @@ export class ScamGuard extends EventEmitter {
   private async inspectJoin(work: Work, member: JoinedMember): Promise<void> {
     // The picture first (Jev), then the name (local); either finding alone alerts the admins.
     let crown: number | null | undefined;
-    if (!await this.reserveCheck(work)) return;
-    try {
-      const result = await this.api.request("avatar:check", { chatId: member.chatId, memberId: member.userId }, "avatar:result");
-      if (!this.current(work)) return;
-      crown = parseAvatar(result, member);
-    } catch (error) {
-      if (!this.current(work)) return;
-      // An unjudged picture must not suppress a name finding.
-      this.emit("notice", error instanceof ApiError ? error.code : "AVATAR_CHECK_FAILED");
+    if (this.avatarViaBackend) {
+      if (!await this.reserveCheck(work)) return;
+      try {
+        const result = await this.api.request("avatar:check", { chatId: member.chatId, memberId: member.userId }, "avatar:result");
+        if (!this.current(work)) return;
+        crown = parseAvatar(result, member);
+      } catch (error) {
+        if (!this.current(work)) return;
+        // An unjudged picture must not suppress a name finding.
+        this.emit("notice", error instanceof ApiError ? error.code : "AVATAR_CHECK_FAILED");
+      }
+    } else if (member.pictureHash === undefined) {
+      crown = null;
+    } else if (this.options.crown) {
+      if (!await this.reserveCheck(work)) return;
+      try {
+        crown = await this.options.crown(member.pictureHash);
+        if (!this.current(work)) return;
+      } catch (error) {
+        if (!this.current(work)) return;
+        // Only our own fixed codes: never a response body, picture or key.
+        this.emit("notice", error instanceof Error && /^CROWN_[A-Z_]+$/.test(error.message) ? error.message : "CROWN_CHECK_FAILED");
+      }
     }
     const crownHit = typeof crown === "number" && crown >= this.options.crownThresholdPercent / 100;
     const nameHit = isAdminLikeName(member.displayName);

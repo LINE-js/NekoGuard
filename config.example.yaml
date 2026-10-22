@@ -9,3 +9,8 @@ detection:
   thresholdPercent: 70
   # 新成員大頭貼含皇冠的模型估計達到此百分比即通知管理員（名稱含管理員相關字詞亦會通知）；省略時為 70。
   crownThresholdPercent: 70
+# 選填：後端只通知新成員加入（較新的 LINE.js 內建 chat:member-joined）時，
+# NekoGuard 以此 TypeSafe 金鑰自行判斷大頭貼皇冠；NEKOGUARD_JEV_TOKEN 會優先於 jev.token。
+jev:
+  token: ''
+  model: jev-1.13.0

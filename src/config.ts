@@ -4,6 +4,8 @@ import { parse } from 'yaml';
 export interface Config {
   api: { url: string; token: string };
   detection: { thresholdPercent: number; crownThresholdPercent: number };
+  /** Present only when a TypeSafe key is configured: crown checks for backends that cannot judge pictures. */
+  jev?: { token: string; model: string };
 }
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -58,7 +60,19 @@ export async function loadConfig(path = 'config.yaml'): Promise<Config> {
   // Optional so existing configurations keep working; the crown check is a separate decision.
   const crownThresholdPercent = value.detection.crownThresholdPercent === undefined
     ? 70 : percent(value.detection.crownThresholdPercent, 'detection.crownThresholdPercent');
-  return { api: { url, token }, detection: { thresholdPercent, crownThresholdPercent } };
+  const jev = value.jev === undefined || value.jev === null ? {} : value.jev;
+  if (!object(jev)) throw new Error('jev must be a mapping when present.');
+  const jevToken = process.env.NEKOGUARD_JEV_TOKEN ?? jev.token ?? '';
+  // Printable ASCII without spaces: the key goes into an HTTP header as is.
+  if (typeof jevToken !== 'string' || (jevToken !== '' && !/^[\x21-\x7e]+$/.test(jevToken))) {
+    throw new Error('jev.token must be printable ASCII without spaces.');
+  }
+  const model = jev.model ?? 'jev-1.13.0';
+  if (typeof model !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(model)) throw new Error('jev.model must be a model name.');
+  return {
+    api: { url, token }, detection: { thresholdPercent, crownThresholdPercent },
+    ...(jevToken ? { jev: { token: jevToken, model } } : {}),
+  };
 }
 
 function percent(value: unknown, name: string): number {

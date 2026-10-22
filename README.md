@@ -4,7 +4,7 @@
 
 自己的訊息在付費分析前排除，包含同帳號手機訊息及外掛警示。OpenChat 的 `p…` 成員 ID 與一般帳號的 `u…` ID 分別比對；不能取得自身社群身分時，不猜測、不呼叫 Jev。
 
-新成員加入 `api.chats` 內的 OpenChat 時，先請 LINE.js 以 Jev 判斷其**目前大頭貼**是否有皇冠，再於本機檢查名稱是否含「管管、管理、群管、副管、版主、板主、群主、admin、moderator」等字詞；任一項成立就 @ 所有查得的管理員提醒疑似冒充，新成員名稱只以純文字列出、不標記。
+新成員加入 `api.chats` 內的 OpenChat 時，先以 Jev 判斷其**大頭貼**是否有皇冠，再於本機檢查名稱是否含「管管、管理、群管、副管、版主、板主、群主、admin、moderator」等字詞；任一項成立就 @ 所有查得的管理員提醒疑似冒充，新成員名稱只以純文字列出、不標記。支援兩種後端：較新的 LINE.js 內建 `chat:member-joined`（只通知加入，大頭貼由 NekoGuard 以自己的 `jev.token` 直接送 TypeSafe 判斷），以及本專案補丁的 `member:join`＋`avatar:check`（由 LINE.js 判斷）。
 
 ## 安裝
 
@@ -61,6 +61,9 @@ api:
 detection:
   thresholdPercent: 70
   crownThresholdPercent: 70 # 選填，省略時為 70
+jev: # 選填；後端為內建 chat:member-joined 的 LINE.js 時，皇冠判斷需要此金鑰
+  token: '' # TypeSafe API key，可改用 NEKOGUARD_JEV_TOKEN
+  model: jev-1.13.0
 ```
 
 `NEKOGUARD_API_TOKEN` 環境變數可覆蓋 `api.token`；空 Token 會拒絕啟動。`config.yaml` 已列入 `.gitignore`，請保持權限 `600`。遠端連線必須使用 `wss://`，只有本機回送位址允許 `ws://`；URL 不得夾帶金鑰、query 或 fragment。
@@ -73,7 +76,7 @@ detection:
 
 `start.sh` 會檢查 Node.js ≥ 22 與 npm，每次依 lockfile 安裝依賴（含編譯需要的 devDependencies）、編譯，再啟動程序；任一步失敗就停止。可從其他目錄呼叫，不會建立或覆蓋 `config.yaml`，也不會自動安裝 Node.js、套用 LINE.js 補丁或啟動 LINE.js。已安裝及編譯完成時，也可用 `npm start` 直接啟動。
 
-設定修改後重新啟動外掛。看見 `MONITORING_READY` 表示 LINE 已登入且後端支援管理員擴充；`SCAM_ALERT_SENT probability=70% admins=20/21` 表示一批通知已由 LINE.js 確認送出（不是管理員已讀）；`JOIN_ALERT_SENT crown=93% name=false admins=1/1` 為新成員提醒（`crown=none` 表示沒有大頭貼、`unknown` 表示未能判定）。啟動時出現 `LINEJS_MEMBER_JOIN_EXTENSION_REQUIRED` 表示 LINE.js 仍是舊版補丁：詐騙監測照常，但不檢查新成員。`SIGINT`／`SIGTERM` 可停止程序。
+設定修改後重新啟動外掛。看見 `MONITORING_READY` 表示 LINE 已登入且後端支援管理員擴充；`SCAM_ALERT_SENT probability=70% admins=20/21` 表示一批通知已由 LINE.js 確認送出（不是管理員已讀）；`JOIN_ALERT_SENT crown=93% name=false admins=1/1` 為新成員提醒（`crown=none` 表示沒有大頭貼、`unknown` 表示未能判定）。啟動時出現 `LINEJS_MEMBER_JOIN_EXTENSION_REQUIRED` 表示後端沒有任何加入事件：詐騙監測照常，但不檢查新成員；出現 `CROWN_CHECK_DISABLED` 表示後端只通知加入而 NekoGuard 未設定 `jev.token`：仍做名稱檢查，皇冠一律「未能判定」。`SIGINT`／`SIGTERM` 可停止程序。
 
 ## 行為與限制
 
@@ -95,7 +98,7 @@ detection:
 - **資料與費用**：外掛不保存聊天內容或登入 session 到磁碟。自動分析會將別人的文字透過 LINE.js 送至 TypeSafe，依其方案計費；請先告知社群並確認資料處理政策。模型結果只供查證，不是事實判定，不會自動刪訊息、踢人或封鎖。
 - **名單一致性**：每次通知前重新完整分頁查詢目前成員，不使用 senderRole 快取；LINE 沒有跨頁原子快照，查詢／發送期間的人員異動仍可能競態。任何頁面失敗或缺漏都不回部分名單。
 - **新成員冒充檢查**：只處理 LINE.js 送出的 `member:join`（OpenChat `NOTIFIED_JOIN_SQUARE_CHAT`），不含自己的社群身分。先以 `avatar:check` 請 LINE.js 重新取得目前大頭貼小圖並送 Jev（`crown >= crownThresholdPercent / 100`，含等號），再以名稱比對；名稱比對先做 NFKC、轉小寫、移除所有非字母數字（空白、符號、表情、零寬字元）並將「菅／筦→管、里→理、羣→群」視為同字，因此「管 理」「群\u200b管」「ＡＤＭＩＮ」「Ad Min」都會命中，但含 admin 的一般英文字（如 badminton）也可能誤報。大頭貼無法判定（未設 Jev 金鑰、圖片非 PNG／JPEG、逾時等）只記錄代碼，不阻擋名稱判定；沒有大頭貼時只看名稱。皇冠判定與詐騙分析共用同一個每分鐘 10 次的付費額度與 6.1 秒間隔，每位新成員固定一次 Jev 呼叫並依 TypeSafe 計費；同一成員重新加入會取消前一次尚未完成的檢查。通知沿用詐騙通知的管理員重新查詢、分批標記、佇列與限流；不回覆任何訊息，也不自動踢人。大頭貼會送至 TypeSafe 標示為實驗性（Dreamer-ready）的圖片功能。
-- **加入事件來源**：LINE 帳號層事件串流不含他人加入，LINE.js 改為讀取 `api.chats` 內各 OpenChat 自己的事件（新成員通知或成員數增加時立即讀，另每 30 秒檢查一次），因此提醒最慢約晚 30 秒；LINE.js 服務日誌出現 `LINE 社群新成員：chat=… member=…` 表示已偵測到加入。需更新 LINE.js 補丁並重新建置、重新啟動才生效。
+- **加入事件來源**：LINE 帳號層事件串流不含他人加入，LINE.js 需讀取 `api.chats` 內各 OpenChat 自己的事件（較新的 LINE.js 內建，日誌為 `LINE 社群成員加入：…`），提醒最慢約晚 30 秒。後端為內建版本時，NekoGuard 依 `pictureId`（`avatar-o-<hash>`）自行從 LINE 公開 CDN 取得小圖，只送 PNG／JPEG 至 TypeSafe（帶 `TypeSafe-Danger-Zone-Images: true`、每次新 UUID、拒絕重新導向、回應 fail-closed），錯誤只記 `CROWN_*` 代碼；格式不符的 `pictureId` 不會被請求，沒有 `pictureId` 視為沒有大頭貼。金鑰只放在 NekoGuard 的 `config.yaml` 或環境變數，不入日誌。
 
 ## 驗證
 

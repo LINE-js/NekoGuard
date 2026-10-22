@@ -82,14 +82,18 @@ export interface JoinedMember {
   chatId: string;
   userId: string;
   displayName: string;
+  /** OpenChat CDN hash of the picture when the backend reports it (`pictureId: "avatar-o-<hash>"`). */
+  pictureHash?: string;
 }
 
+/** `member:join` (NekoGuard patch) and `chat:member-joined` (newer LINE.js) share this shape. */
 export function parseJoin(frame: Frame): JoinedMember | undefined {
   const member = frame.member;
   if (typeof frame.chatId !== "string" || !/^[ucrsm][A-Za-z0-9]{10,64}$/.test(frame.chatId) || !record(member)
     || typeof member.userId !== "string" || !/^p[A-Za-z0-9]{10,64}$/.test(member.userId)
     || typeof member.displayName !== "string") return undefined;
-  return { chatId: frame.chatId, userId: member.userId, displayName: member.displayName };
+  const picture = typeof member.pictureId === "string" ? /^avatar-o-([A-Za-z0-9_-]{1,512})$/.exec(member.pictureId) : null;
+  return { chatId: frame.chatId, userId: member.userId, displayName: member.displayName, ...(picture ? { pictureHash: picture[1] } : {}) };
 }
 
 /** Crown probability, or null when the member has no picture. */
