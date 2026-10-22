@@ -76,7 +76,7 @@ jev: # 選填；後端為內建 chat:member-joined 的 LINE.js 時，皇冠判�
 
 `start.sh` 會檢查 Node.js ≥ 22 與 npm，每次依 lockfile 安裝依賴（含編譯需要的 devDependencies）、編譯，再啟動程序；任一步失敗就停止。可從其他目錄呼叫，不會建立或覆蓋 `config.yaml`，也不會自動安裝 Node.js、套用 LINE.js 補丁或啟動 LINE.js。已安裝及編譯完成時，也可用 `npm start` 直接啟動。
 
-設定修改後重新啟動外掛。看見 `MONITORING_READY` 表示 LINE 已登入且後端支援管理員擴充；`SCAM_ALERT_SENT probability=70% admins=20/21` 表示一批通知已由 LINE.js 確認送出（不是管理員已讀）；`JOIN_ALERT_SENT crown=93% name=false admins=1/1` 為新成員提醒（`crown=none` 表示沒有大頭貼、`unknown` 表示未能判定）。啟動時出現 `LINEJS_MEMBER_JOIN_EXTENSION_REQUIRED` 表示後端沒有任何加入事件：詐騙監測照常，但不檢查新成員；出現 `CROWN_CHECK_DISABLED` 表示後端只通知加入而 NekoGuard 未設定 `jev.token`：仍做名稱檢查，皇冠一律「未能判定」。`SIGINT`／`SIGTERM` 可停止程序。
+設定修改後重新啟動外掛。看見 `MONITORING_READY` 表示 LINE 已登入且後端支援管理員擴充；`SCAM_ALERT_SENT probability=70% admins=20/21` 表示一批通知已由 LINE.js 確認送出（不是管理員已讀）；`JOIN_ALERT_SENT crown=93% name=false admins=1/1` 為新成員提醒（`crown=none` 表示沒有大頭貼、`unknown` 表示未能判定）。每位新成員判讀完成都會記一行 `JOIN_CHECKED chat=… member=… fake_crown=0% name=false alert=false`，未觸發警示也一樣（只記 ID 與結果，不記名稱）。啟動時出現 `LINEJS_MEMBER_JOIN_EXTENSION_REQUIRED` 表示後端沒有任何加入事件：詐騙監測照常，但不檢查新成員；出現 `CROWN_CHECK_DISABLED` 表示後端只通知加入而 NekoGuard 未設定 `jev.token`：仍做名稱檢查，皇冠一律「未能判定」。`SIGINT`／`SIGTERM` 可停止程序。
 
 ## 行為與限制
 

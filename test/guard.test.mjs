@@ -803,3 +803,13 @@ test('a joiner without a picture is not sent for judging and is reported as havi
   assert.equal(sends.length, 1);
   assert.ok(sends[0].text.includes('假皇冠機率：0%\n'));
 });
+
+test('every judged join reports its verdict, including ones that raise no alert', async () => {
+  const h = harness({ crown: 0.1 });
+  const verdicts = [];
+  h.guard.on('join', verdict => verdicts.push(verdict));
+  h.guard.handle(join('小明'));
+  await h.guard.whenIdle();
+  assert.deepEqual(verdicts, [{ chatId, memberId: joinerId, crown: 0.1, crownHit: false, nameHit: false, alert: false }]);
+  assert.equal(h.sends.length, 0);
+});

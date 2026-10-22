@@ -75,6 +75,12 @@ async function main(): Promise<void> {
       if (event.kind === "scam") console.info(`SCAM_ALERT_SENT probability=${event.probability * 100}% admins=${event.mentioned}/${event.total}`);
       else console.info(`JOIN_ALERT_SENT crown=${typeof event.crown === "number" ? `${event.crown * 100}%` : event.crown === null ? "none" : "unknown"} name=${event.nameHit} admins=${event.mentioned}/${event.total}`);
     });
+    guard.on("join", (event: { chatId: string; memberId: string; crown: number | null | undefined; nameHit: boolean; alert: boolean }) => {
+      if (closed) return;
+      // No picture means no crown (0%); "unknown" only when a picture could not be judged.
+      const crown = event.crown === undefined ? "unknown" : `${(event.crown ?? 0) * 100}%`;
+      console.info(`JOIN_CHECKED chat=${event.chatId} member=${event.memberId} fake_crown=${crown} name=${event.nameHit} alert=${event.alert}`);
+    });
     try {
       await client.connect();
       if (!closed && !stopped) console.info(`NekoGuard 已連線，詐騙判定門檻 ${config.detection.thresholdPercent}%，皇冠判定門檻 ${config.detection.crownThresholdPercent}%。`);

@@ -353,6 +353,8 @@ export class ScamGuard extends EventEmitter {
     }
     const crownHit = typeof crown === "number" && crown >= this.options.crownThresholdPercent / 100;
     const nameHit = isAdminLikeName(member.displayName);
+    // Every judged join is reported, alerting or not; ids and results only, never the name.
+    this.emit("join", { chatId: member.chatId, memberId: member.userId, crown, crownHit, nameHit, alert: crownHit || nameHit });
     if (!crownHit && !nameHit) return;
     this.enqueue({
       work, event: { kind: "join", crown, nameHit },
