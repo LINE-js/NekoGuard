@@ -63,9 +63,8 @@ export function buildJoinAlerts(
   admins: readonly Admin[],
 ): Alert[] {
   if (!findings.crownHit && !findings.nameHit) throw new Error('A join alert needs at least one finding.');
-  const crown = findings.crown === undefined ? '未能判定'
-    : findings.crown === null ? '沒有大頭貼'
-    : `${percentFormat.format(findings.crown * 100)}%${findings.crownHit ? '（達門檻）' : ''}`;
+  // No picture means no crown: 0%. Only an unjudged picture has no number to show.
+  const crown = findings.crown === undefined ? '未能判定' : `${percentFormat.format((findings.crown ?? 0) * 100)}%`;
   // Plain text, never a mention: the newcomer is untrusted and has not spoken in the chat.
   const header = `疑似冒充管理員提醒\n新成員：${cleanName(member.displayName, '（未提供名稱）')}\n成員 ID：${stripControls(member.userId)}\n大頭貼含皇冠機率：${crown}\n名稱含管理員相關字詞：${findings.nameHit ? '是' : '否'}\n此為自動判定，並非事實認定，請管理員查證。\n`;
   return mentionAdmins(header, admins);
