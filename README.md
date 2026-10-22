@@ -4,7 +4,7 @@
 
 自己的訊息在付費分析前排除，包含同帳號手機訊息及外掛警示。OpenChat 的 `p…` 成員 ID 與一般帳號的 `u…` ID 分別比對；不能取得自身社群身分時，不猜測、不呼叫 Jev。
 
-新成員加入 `api.chats` 內的 OpenChat 時，先以 Jev 判斷其**大頭貼**是否有皇冠，再於本機檢查名稱是否含「管管、管理、群管、副管、版主、板主、群主、admin、moderator」等字詞；任一項成立就 @ 所有查得的管理員提醒疑似冒充，新成員名稱只以純文字列出、不標記。支援兩種後端：較新的 LINE.js 內建 `chat:member-joined`（只通知加入，大頭貼由 NekoGuard 以自己的 `jev.token` 直接送 TypeSafe 判斷），以及本專案補丁的 `member:join`＋`avatar:check`（由 LINE.js 判斷）。
+新成員加入 `api.chats` 內的 OpenChat 時，先以 Jev 判斷其**大頭貼**是否有皇冠，再於本機檢查名稱是否含「管管、管理、群管、副管、版主、板主、群主、小幫手、小助手、小編（含簡體）、admin、moderator」等字詞；任一項成立就 @ 所有查得的管理員提醒疑似冒充，新成員名稱只以純文字列出、不標記。支援兩種後端：較新的 LINE.js 內建 `chat:member-joined`（只通知加入，大頭貼由 NekoGuard 以自己的 `jev.token` 直接送 TypeSafe 判斷），以及本專案補丁的 `member:join`＋`avatar:check`（由 LINE.js 判斷）。
 
 ## 安裝
 
