@@ -772,7 +772,7 @@ test('newer LINE.js chat:member-joined frames are checked: the reported name ale
   await guard.whenIdle();
   assert.deepEqual(judged, [hash]);
   assert.equal(sends.length, 1);
-  assert.ok(sends[0].text.includes('大頭貼含皇冠機率：90%\n') && sends[0].text.includes('名稱含管理員相關字詞：是'));
+  assert.ok(sends[0].text.includes('假皇冠機率：90%\n') && sends[0].text.includes('名稱含管理員相關字詞：是'));
 
   // Without a local key: no avatar:check request to a backend that lacks it, the name still alerts.
   assert.ok(h.notices.includes('CROWN_CHECK_DISABLED'));
@@ -801,5 +801,5 @@ test('a joiner without a picture is not sent for judging and is reported as havi
   await guard.whenIdle();
   assert.deepEqual(judged, [], 'a malformed picture id is never fetched');
   assert.equal(sends.length, 1);
-  assert.ok(sends[0].text.includes('大頭貼含皇冠機率：0%\n'));
+  assert.ok(sends[0].text.includes('假皇冠機率：0%\n'));
 });
