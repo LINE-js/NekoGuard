@@ -1,7 +1,7 @@
 import { parseArgs } from "node:util";
 import { ApiClient } from "./client.js";
 import { loadConfig } from "./config.js";
-import { ScamGuard } from "./guard.js";
+import { ScamGuard, type AlertEvent } from "./guard.js";
 
 async function main(): Promise<void> {
   const { values } = parseArgs({ options: { config: { type: "string", default: "config.yaml" }, help: { type: "boolean" } } });
@@ -34,7 +34,10 @@ async function main(): Promise<void> {
   const connect = async () => {
     if (stopped) return;
     const client = new ApiClient(config.api.url, config.api.token);
-    const guard = new ScamGuard(client, { thresholdPercent: config.detection.thresholdPercent });
+    const guard = new ScamGuard(client, {
+      thresholdPercent: config.detection.thresholdPercent,
+      crownThresholdPercent: config.detection.crownThresholdPercent,
+    });
     let closed = false;
     const helloDeadline = setTimeout(() => retry("LINEJS_HELLO_TIMEOUT"), 25_000);
     closeSession = () => {
@@ -63,12 +66,15 @@ async function main(): Promise<void> {
       console.error(code);
       shutdown(1);
     });
-    guard.on("alert", ({ probability, mentioned, total }) => {
-      if (!closed) console.info(`SCAM_ALERT_SENT probability=${probability * 100}% admins=${mentioned}/${total}`);
+    guard.on("alert", (event: AlertEvent & { mentioned: number; total: number }) => {
+      if (closed) return;
+      // Codes and numbers only: never the member's name or message text.
+      if (event.kind === "scam") console.info(`SCAM_ALERT_SENT probability=${event.probability * 100}% admins=${event.mentioned}/${event.total}`);
+      else console.info(`JOIN_ALERT_SENT crown=${typeof event.crown === "number" ? `${event.crown * 100}%` : event.crown === null ? "none" : "unknown"} name=${event.nameHit} admins=${event.mentioned}/${event.total}`);
     });
     try {
       await client.connect();
-      if (!closed && !stopped) console.info(`NekoGuard 已連線，詐騙判定門檻 ${config.detection.thresholdPercent}%。`);
+      if (!closed && !stopped) console.info(`NekoGuard 已連線，詐騙判定門檻 ${config.detection.thresholdPercent}%，皇冠判定門檻 ${config.detection.crownThresholdPercent}%。`);
     } catch {
       retry("WS_CONNECT_FAILED");
     }

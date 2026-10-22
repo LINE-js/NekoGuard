@@ -3,7 +3,7 @@ import { parse } from 'yaml';
 
 export interface Config {
   api: { url: string; token: string };
-  detection: { thresholdPercent: number };
+  detection: { thresholdPercent: number; crownThresholdPercent: number };
 }
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -54,9 +54,16 @@ export async function loadConfig(path = 'config.yaml'): Promise<Config> {
   if (typeof token !== 'string' || token.trim() === '' || /[\u0000-\u001f\u007f]/u.test(token)) {
     throw new Error('A non-empty API token is required in NEKOGUARD_API_TOKEN or api.token.');
   }
-  const thresholdPercent = value.detection.thresholdPercent;
-  if (typeof thresholdPercent !== 'number' || !Number.isFinite(thresholdPercent) || thresholdPercent < 0 || thresholdPercent > 100) {
-    throw new Error('detection.thresholdPercent must be a finite number between 0 and 100.');
+  const thresholdPercent = percent(value.detection.thresholdPercent, 'detection.thresholdPercent');
+  // Optional so existing configurations keep working; the crown check is a separate decision.
+  const crownThresholdPercent = value.detection.crownThresholdPercent === undefined
+    ? 70 : percent(value.detection.crownThresholdPercent, 'detection.crownThresholdPercent');
+  return { api: { url, token }, detection: { thresholdPercent, crownThresholdPercent } };
+}
+
+function percent(value: unknown, name: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 100) {
+    throw new Error(`${name} must be a finite number between 0 and 100.`);
   }
-  return { api: { url, token }, detection: { thresholdPercent } };
+  return value;
 }

@@ -1,24 +1,36 @@
 import { hash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
-import { buildAlerts } from "./alerts.js";
+import { buildAlerts, buildJoinAlerts, type Alert } from "./alerts.js";
 import { ApiError } from "./client.js";
-import { isMessage, parseAdmins, parseAnalysis, record, type Api, type Frame, type Message, type ScamAnalysis } from "./protocol.js";
+import { isAdminLikeName } from "./names.js";
+import {
+  isMessage, parseAdmins, parseAnalysis, parseAvatar, parseJoin, record,
+  type Admin, type Api, type Frame, type JoinedMember, type Message,
+} from "./protocol.js";
 
 interface Work {
   key: string;
   signature: string;
   message: Pick<Message, "messageId" | "channelId" | "senderId">;
   generation: number;
+  /** Set when the work is a member join rather than a message; `message.senderId` is the joiner. */
+  join?: JoinedMember;
 }
+
+export type AlertEvent =
+  | { kind: "scam"; probability: number }
+  | { kind: "join"; crown: number | null | undefined; nameHit: boolean };
 
 interface Notification {
   work: Work;
-  analysis: ScamAnalysis;
+  build: (admins: readonly Admin[]) => Alert[];
+  event: AlertEvent;
 }
 
 interface GuardOptions {
   thresholdPercent: number;
+  crownThresholdPercent: number;
   /** Test clock seams; production observes LINE.js's shared 10 checks/minute and 20 sends/minute. */
   checkIntervalMs?: number;
   sendIntervalMs?: number;
@@ -32,6 +44,8 @@ const MAX_IN_FLIGHT = 4;
 export class ScamGuard extends EventEmitter {
   private ready = false;
   private supported = false;
+  private joinsSupported = false;
+  private joinSequence = 0;
   private userId?: string;
   private generation = 0;
   private ownMembers = new Map<string, string>();
@@ -58,6 +72,9 @@ export class ScamGuard extends EventEmitter {
       this.reset();
       this.supported = frame.protocol === 2 && Array.isArray(frame.capabilities) && frame.capabilities.includes("chat:admins");
       if (!this.supported) this.emit("fatal", "LINEJS_ADMIN_EXTENSION_REQUIRED");
+      this.joinsSupported = this.supported && (frame.capabilities as unknown[]).includes("member:join");
+      // Scam monitoring still works against an older extension; only join checks are unavailable.
+      if (this.supported && !this.joinsSupported) this.emit("notice", "LINEJS_MEMBER_JOIN_EXTENSION_REQUIRED");
       return;
     }
     if (frame.type === "auth:state" && frame.state !== "ready") {
@@ -106,6 +123,24 @@ export class ScamGuard extends EventEmitter {
       }
       return;
     }
+    if (frame.type === "member:join") {
+      const member = parseJoin(frame);
+      if (!member || !this.ready || !this.joinsSupported || !this.channels.has(member.chatId)
+        || member.userId === this.ownMembers.get(member.chatId)) return;
+      const key = `join:${member.chatId}:${member.userId}`;
+      // A rejoin supersedes any check still pending for the earlier join.
+      this.invalidate(key);
+      if (this.queue.size >= MAX_QUEUE) {
+        this.emit("notice", "ANALYSIS_QUEUE_FULL");
+        return;
+      }
+      const work: Work = {
+        key, signature: `join:${++this.joinSequence}`, generation: this.generation, join: member,
+        message: { messageId: "", channelId: member.chatId, senderId: member.userId },
+      };
+      this.track(work);
+      return;
+    }
     if ((frame.type !== "message" && frame.type !== "message:edit") || !isMessage(frame.message) || !this.ready) return;
     const message = frame.message;
     const key = `${message.channelId}:${message.messageId}`;
@@ -129,9 +164,13 @@ export class ScamGuard extends EventEmitter {
       key, signature, generation: this.generation,
       message: { messageId: message.messageId, channelId: message.channelId, senderId: message.senderId },
     };
-    this.recent.set(key, work);
+    this.track(work);
+  }
+
+  private track(work: Work): void {
+    this.recent.set(work.key, work);
     if (this.recent.size > MAX_RECENT) this.invalidate(this.recent.keys().next().value!);
-    this.queue.set(key, work);
+    this.queue.set(work.key, work);
     this.start();
   }
 
@@ -211,7 +250,8 @@ export class ScamGuard extends EventEmitter {
   }
 
   private startNotifications(): void {
-    for (const [key, { work, analysis }] of this.notifications) {
+    for (const [key, notification] of this.notifications) {
+      const work = notification.work;
       if (!this.ready || this.notifying.size >= MAX_IN_FLIGHT) break;
       if (!this.current(work)) {
         this.notifications.delete(key);
@@ -221,14 +261,14 @@ export class ScamGuard extends EventEmitter {
       // Waiting jobs in a busy chat must not occupy other notification lanes.
       if (this.notifying.has(chatId)) continue;
       this.notifications.delete(key);
-      this.startNotification(work, analysis);
+      this.startNotification(notification);
     }
   }
 
-  private startNotification(work: Work, analysis: ScamAnalysis): void {
-    const chatId = work.message.channelId;
-    const task = this.withAdmins(chatId, () => this.notify(work, analysis))
-      .catch(error => this.failed(work, error)).finally(() => {
+  private startNotification(notification: Notification): void {
+    const chatId = notification.work.message.channelId;
+    const task = this.withAdmins(chatId, () => this.notify(notification))
+      .catch(error => this.failed(notification.work, error)).finally(() => {
         this.notifying.delete(chatId);
         this.startNotifications();
       });
@@ -263,42 +303,80 @@ export class ScamGuard extends EventEmitter {
     if (!this.current(work) || !this.ownMembers.has(message.channelId)) return;
     // OpenChat's p… identity differs from the account's u… identity, including phone-originated sends.
     if (message.senderId === this.userId || message.senderId === this.ownMembers.get(message.channelId)) return;
-    // Recheck after waking: other workers or a delayed event loop may have
-    // consumed the slot. Reserve only at actual dispatch, never in the future.
-    while (this.nextCheck > performance.now()) {
-      await this.wait(work, this.nextCheck - performance.now());
-      if (!this.current(work)) return;
-    }
-    if (!this.current(work)) return;
-    this.nextCheck = performance.now() + (this.options.checkIntervalMs ?? 6100);
+    if (work.join) return this.inspectJoin(work, work.join);
+    if (!await this.reserveCheck(work)) return;
     const result = await this.api.request("scam:check", {
       chatId: message.channelId, messageId: message.messageId,
     }, "scam:result");
     if (!this.current(work)) return;
     const analysis = parseAnalysis(result, message);
     if (analysis.probability < this.options.thresholdPercent / 100) return;
+    this.enqueue({
+      work, event: { kind: "scam", probability: analysis.probability },
+      build: admins => buildAlerts(message, analysis, admins),
+    });
+  }
+
+  private async inspectJoin(work: Work, member: JoinedMember): Promise<void> {
+    // The picture first (Jev), then the name (local); either finding alone alerts the admins.
+    let crown: number | null | undefined;
+    if (!await this.reserveCheck(work)) return;
+    try {
+      const result = await this.api.request("avatar:check", { chatId: member.chatId, memberId: member.userId }, "avatar:result");
+      if (!this.current(work)) return;
+      crown = parseAvatar(result, member);
+    } catch (error) {
+      if (!this.current(work)) return;
+      // An unjudged picture must not suppress a name finding.
+      this.emit("notice", error instanceof ApiError ? error.code : "AVATAR_CHECK_FAILED");
+    }
+    const crownHit = typeof crown === "number" && crown >= this.options.crownThresholdPercent / 100;
+    const nameHit = isAdminLikeName(member.displayName);
+    if (!crownHit && !nameHit) return;
+    this.enqueue({
+      work, event: { kind: "join", crown, nameHit },
+      build: admins => buildJoinAlerts(member, { crown, crownHit, nameHit }, admins),
+    });
+  }
+
+  /** Waits for the shared paid-check slot; false when the work became stale meanwhile. */
+  private async reserveCheck(work: Work): Promise<boolean> {
+    // Recheck after waking: other workers or a delayed event loop may have
+    // consumed the slot. Reserve only at actual dispatch, never in the future.
+    while (this.nextCheck > performance.now()) {
+      await this.wait(work, this.nextCheck - performance.now());
+      if (!this.current(work)) return false;
+    }
+    if (!this.current(work)) return false;
+    this.nextCheck = performance.now() + (this.options.checkIntervalMs ?? 6100);
+    return true;
+  }
+
+  private enqueue(notification: Notification): void {
+    const chatId = notification.work.message.channelId;
     // Give older runnable notifications priority, then use a free lane without
     // charging a waiting-queue slot to a notification that can start immediately.
     this.startNotifications();
-    if (this.notifying.size < MAX_IN_FLIGHT && !this.notifying.has(message.channelId)) {
-      this.startNotification(work, analysis);
+    if (this.notifying.size < MAX_IN_FLIGHT && !this.notifying.has(chatId)) {
+      this.startNotification(notification);
       return;
     }
     if (this.notifications.size >= MAX_QUEUE) {
       this.emit("notice", "NOTIFICATION_QUEUE_FULL");
       return;
     }
-    this.notifications.set(work.key, { work, analysis });
+    this.notifications.set(notification.work.key, notification);
   }
 
-  private async notify(work: Work, analysis: ScamAnalysis): Promise<void> {
+  private async notify(notification: Notification): Promise<void> {
+    const work = notification.work;
     if (!this.current(work)) return;
     const message = work.message;
     // Roles may change while Jev is answering; never reuse the discovery list for notification.
     const members = await this.fetchAdmins(work);
     if (!members) return;
     if (message.senderId === members.ownMemberId) return;
-    const alerts = buildAlerts(message, analysis, members.admins);
+    const alerts = notification.build(members.admins);
     let sent = 0;
     for (const alert of alerts) {
       while (this.nextSend > performance.now()) {
@@ -310,7 +388,7 @@ export class ScamGuard extends EventEmitter {
       await this.api.request("message:send", { chatId: message.channelId, ...alert }, "sent");
       if (!this.current(work)) return;
       sent += alert.mentions.length;
-      this.emit("alert", { probability: analysis.probability, mentioned: sent, total: members.admins.length });
+      this.emit("alert", { ...notification.event, mentioned: sent, total: members.admins.length });
     }
   }
 

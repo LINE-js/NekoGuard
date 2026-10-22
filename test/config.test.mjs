@@ -44,6 +44,18 @@ test('rejects invalid threshold values instead of coercing', async () => {
   }
 });
 
+test('the crown threshold is optional, independent and validated like the scam threshold', async () => {
+  await withConfig(yaml('90'), async (path) => assert.equal((await loadConfig(path)).detection.crownThresholdPercent, 70));
+  await withConfig(`${yaml('90')}  crownThresholdPercent: 55.5\n`, async (path) => {
+    assert.deepEqual((await loadConfig(path)).detection, { thresholdPercent: 90, crownThresholdPercent: 55.5 });
+  });
+  for (const value of ['-1', '101', '"70"', 'null']) {
+    await withConfig(`${yaml()}  crownThresholdPercent: ${value}\n`, async (path) => {
+      await assert.rejects(loadConfig(path), /crownThresholdPercent/);
+    });
+  }
+});
+
 test('permits only secure remote endpoints or loopback ws endpoints', async () => {
   for (const url of ['ws://localhost:3789/api/ws', 'ws://[::1]:3789/api/ws', 'wss://example.com/api/ws']) {
     await withConfig(yaml('70', url), async (path) => assert.equal((await loadConfig(path)).api.url, url));

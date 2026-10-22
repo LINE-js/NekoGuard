@@ -26,6 +26,10 @@ function harness(options = {}) {
       if (options.check) return options.check(fields);
       return { type: 'scam:result', ...fields, analysis: { probability: options.probability ?? 0.7, tactic: { kind: 'investment', confidence: 0.8 } } };
     }
+    if (type === 'avatar:check') {
+      if (options.avatar) return options.avatar(fields);
+      return { type: 'avatar:result', ...fields, analysis: { probability: options.crown ?? 0 } };
+    }
     if (type === 'message:send') {
       sends.push(fields);
       if (options.send) return options.send(fields);
@@ -33,11 +37,11 @@ function harness(options = {}) {
     }
     throw new Error('unexpected request');
   } };
-  const guard = new ScamGuard(api, { thresholdPercent: options.threshold ?? 70, checkIntervalMs: 0, sendIntervalMs: 0, adminIntervalMs: 0, ...options.intervals });
+  const guard = new ScamGuard(api, { thresholdPercent: options.threshold ?? 70, crownThresholdPercent: options.crownThreshold ?? 70, checkIntervalMs: 0, sendIntervalMs: 0, adminIntervalMs: 0, ...options.intervals });
   guard.on('notice', code => notices.push(code));
   guard.on('fatal', code => notices.push(code));
   const ready = () => {
-    guard.handle({ type: 'hello', protocol: 2, capabilities: ['chat:admins'] });
+    guard.handle({ type: 'hello', protocol: 2, capabilities: options.capabilities ?? ['chat:admins', 'member:join'] });
     guard.handle({ type: 'auth:ready', profile: { userId } });
     guard.handle({ type: 'channels', channels: (options.chats ?? [chatId]).map(channelId => ({ channelId, kind: 'square' })) });
   };
@@ -682,4 +686,67 @@ test('a full notification backlog still admits free chat lanes without exceeding
   assert.deepEqual(h.sends.map(send => send.replyTo).sort((a, b) => Number(a) - Number(b)), [
     ...Array.from({ length: 501 }, (_, i) => String(i + 1)), '1000', '1001', '1002',
   ]);
+});
+
+const joinerId = 'p' + 'e'.repeat(32);
+const join = (displayName, extra = {}) => ({ type: 'member:join', chatId, member: { userId: joinerId, displayName }, ...extra });
+
+test('a join alerts on a crown at the inclusive threshold or an admin-like name, checking the picture before the name', async () => {
+  for (const [crown, name, expected] of [[0.699999, '小明', false], [0.7, '小明', true], [0, '群管小幫手', true], [null, '管 理 員', true], [null, '小明', false]]) {
+    const h = harness({ avatar: fields => ({ type: 'avatar:result', ...fields, ...(crown === null ? {} : { analysis: { probability: crown } }) }) });
+    h.guard.handle(join(name));
+    await h.guard.whenIdle();
+    assert.equal(h.calls.filter(call => call.type === 'avatar:check').length, 1, 'the picture is judged even when the name already matches');
+    assert.equal(h.sends.length > 0, expected, `${crown} ${name}`);
+    if (!expected) continue;
+    const [send] = h.sends;
+    assert.equal(send.replyTo, undefined);
+    assert.deepEqual(send.mentions.map(mention => mention.userId), [admin.userId], 'the newcomer is named in text, never mentioned');
+    assert.ok(send.text.includes(joinerId));
+  }
+});
+
+test('an unjudged picture never hides a name finding, and joins honor scope, own identity and capability', async () => {
+  const h = harness({ avatar: () => { throw new ApiError('AVATAR_CHECK_UNAVAILABLE'); } });
+  h.guard.handle(join('Admin_Amy'));
+  await h.guard.whenIdle();
+  assert.equal(h.sends.length, 1);
+  assert.ok(h.sends[0].text.includes('未能判定'));
+  assert.ok(h.notices.includes('AVATAR_CHECK_UNAVAILABLE'));
+
+  const scoped = harness({ crown: 1 });
+  scoped.guard.handle(join('管理', { chatId: 'm' + 'z'.repeat(32) }));
+  scoped.guard.handle(join('管理', { member: { userId: ownId, displayName: '管理' } }));
+  await scoped.guard.whenIdle();
+  assert.deepEqual(scoped.calls.filter(call => call.type === 'avatar:check'), [], 'unscoped chat and own identity are never checked');
+
+  const old = harness({ crown: 1, capabilities: ['chat:admins'] });
+  assert.ok(old.notices.includes('LINEJS_MEMBER_JOIN_EXTENSION_REQUIRED'));
+  old.guard.handle(join('群管'));
+  old.guard.handle({ type: 'message', message: message(1) });
+  await old.guard.whenIdle();
+  assert.deepEqual(old.calls.filter(call => call.type === 'avatar:check'), []);
+  assert.equal(old.sends.length, 1, 'scam monitoring keeps working on an older extension');
+});
+
+test('joins share the paid-check pacing with scam checks, and a rejoin or account change drops a pending check', async () => {
+  const gate = Promise.withResolvers();
+  let checks = 0;
+  const h = harness({ avatar: async fields => { checks += 1; if (checks === 1) await gate.promise; return { type: 'avatar:result', ...fields, analysis: { probability: 1 } }; } });
+  h.guard.handle(join('小明'));
+  await new Promise(resolve => setImmediate(resolve));
+  h.guard.handle(join('小明'));
+  gate.resolve();
+  await h.guard.whenIdle();
+  assert.equal(checks, 2);
+  assert.equal(h.sends.length, 1, 'only the latest join may alert');
+
+  const paced = harness({ intervals: { checkIntervalMs: 60_000 } });
+  paced.guard.handle({ type: 'message', message: message(1) });
+  paced.guard.handle(join('群管'));
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.deepEqual(paced.calls.filter(call => call.type === 'scam:check' || call.type === 'avatar:check').map(call => call.type), ['scam:check']);
+  paced.guard.handle({ type: 'auth:state', state: 'logged_out' });
+  await paced.guard.whenIdle();
+  assert.equal(paced.calls.some(call => call.type === 'avatar:check'), false);
 });

@@ -78,6 +78,28 @@ export function parseAnalysis(frame: Frame, message: Pick<Message, "channelId" |
   return { probability: analysis.probability, tactic: { kind: tactic.kind, confidence: tactic.confidence } };
 }
 
+export interface JoinedMember {
+  chatId: string;
+  userId: string;
+  displayName: string;
+}
+
+export function parseJoin(frame: Frame): JoinedMember | undefined {
+  const member = frame.member;
+  if (typeof frame.chatId !== "string" || !/^[ucrsm][A-Za-z0-9]{10,64}$/.test(frame.chatId) || !record(member)
+    || typeof member.userId !== "string" || !/^p[A-Za-z0-9]{10,64}$/.test(member.userId)
+    || typeof member.displayName !== "string") return undefined;
+  return { chatId: frame.chatId, userId: member.userId, displayName: member.displayName };
+}
+
+/** Crown probability, or null when the member has no picture. */
+export function parseAvatar(frame: Frame, member: Pick<JoinedMember, "chatId" | "userId">): number | null {
+  if (frame.chatId !== member.chatId || frame.memberId !== member.userId) throw new Error("INVALID_AVATAR_RESPONSE");
+  if (frame.analysis === undefined) return null;
+  if (!record(frame.analysis) || !unit(frame.analysis.probability)) throw new Error("INVALID_AVATAR_RESPONSE");
+  return frame.analysis.probability;
+}
+
 function unit(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
 }

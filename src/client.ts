@@ -5,7 +5,7 @@ import { record, type Api, type Frame } from "./protocol.js";
 const API_CODES: Readonly<Record<string, true>> = {
   UNKNOWN_CHAT: true, INVALID_REQUEST: true, RATE_LIMITED: true, SEND_FAILED: true,
   SCAM_CHECK_FAILED: true, SCAM_CHECK_UNAVAILABLE: true, UNKNOWN_TYPE: true,
-  CHAT_ADMINS_FAILED: true, CHAT_ADMINS_UNSUPPORTED: true,
+  CHAT_ADMINS_FAILED: true, CHAT_ADMINS_UNSUPPORTED: true, AVATAR_CHECK_FAILED: true, AVATAR_CHECK_UNAVAILABLE: true,
 };
 
 export class ApiError extends Error {
