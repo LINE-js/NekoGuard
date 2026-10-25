@@ -6,6 +6,8 @@ export interface Config {
   detection: { thresholdPercent: number; crownThresholdPercent: number };
   /** Present only when a TypeSafe key is configured: crown checks for backends that cannot judge pictures. */
   jev?: { token: string; model: string };
+  /** Present only when an Anthropic key is configured: second opinion on flagged messages. */
+  review?: { apiKey: string; model: string };
 }
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -69,9 +71,18 @@ export async function loadConfig(path = 'config.yaml'): Promise<Config> {
   }
   const model = jev.model ?? 'jev-1.13.0';
   if (typeof model !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(model)) throw new Error('jev.model must be a model name.');
+  const review = value.review === undefined || value.review === null ? {} : value.review;
+  if (!object(review)) throw new Error('review must be a mapping when present.');
+  const reviewKey = process.env.NEKOGUARD_REVIEW_API_KEY ?? review.apiKey ?? '';
+  if (typeof reviewKey !== 'string' || (reviewKey !== '' && !/^[\x21-\x7e]+$/.test(reviewKey))) {
+    throw new Error('review.apiKey must be printable ASCII without spaces.');
+  }
+  const reviewModel = review.model ?? 'claude-haiku-5-5';
+  if (typeof reviewModel !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(reviewModel)) throw new Error('review.model must be a model name.');
   return {
     api: { url, token }, detection: { thresholdPercent, crownThresholdPercent },
     ...(jevToken ? { jev: { token: jevToken, model } } : {}),
+    ...(reviewKey ? { review: { apiKey: reviewKey, model: reviewModel } } : {}),
   };
 }
 

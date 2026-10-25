@@ -44,6 +44,9 @@ api:
 jev:
   token: '' # 在 LINE.js 本機填入 TypeSafe API key
   model: jev-1.13.0
+review: # 選填;Jev 判定達門檻後再由 Claude 複判意圖,可把門檻調低(如 60)
+  apiKey: '' # Anthropic API key,可改用 NEKOGUARD_REVIEW_API_KEY
+  model: claude-haiku-5-5
 ```
 
 重新啟動 LINE.js，確認已登入，再於該目錄執行 `npm run cli -- token` 產生機器人 Token。Token 只顯示一次，請勿貼到日誌、版本控制或聊天。
@@ -65,6 +68,8 @@ jev: # 選填；後端為內建 chat:member-joined 的 LINE.js 時，皇冠判�
   token: '' # TypeSafe API key，可改用 NEKOGUARD_JEV_TOKEN
   model: jev-1.13.0
 ```
+
+**意圖複判**:設定 `review.apiKey` 後,詐騙訊息經 Jev 判定達門檻,會把該則文字連同 Jev 機率送交 Anthropic 的 Claude(預設 `claude-haiku-5-5`)再判一次發言意圖;判為非詐騙就不通知,log 記 `SCAM_REVIEWED probability=…% intent=dismissed`。複判失敗或回應格式不符時照常通知並記 `REVIEW_FAILED`/`REVIEW_INVALID_RESPONSE`。訊息文字只在送出複判時暫存,不寫入 log;金鑰只放在 `config.yaml` 或環境變數。僅適用詐騙訊息,不影響新成員檢查。
 
 `NEKOGUARD_API_TOKEN` 環境變數可覆蓋 `api.token`；空 Token 會拒絕啟動。`config.yaml` 已列入 `.gitignore`，請保持權限 `600`。遠端連線必須使用 `wss://`，只有本機回送位址允許 `ws://`；URL 不得夾帶金鑰、query 或 fragment。
 

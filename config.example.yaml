@@ -14,3 +14,8 @@ detection:
 jev:
   token: ''
   model: jev-1.13.0
+# 選填:Jev 判定達門檻後,再交給 Claude 判斷發言意圖,誤報就不通知管理員(僅詐騙訊息)。
+# NEKOGUARD_REVIEW_API_KEY 會優先於 review.apiKey;未設定金鑰就不啟用。判斷失敗時照常通知。
+review:
+  apiKey: ''
+  model: claude-haiku-5-5

@@ -13,6 +13,7 @@ interface Work {
   key: string;
   signature: string;
   message: Pick<Message, "messageId" | "channelId" | "senderId">;
+  reviewText?: string;
   generation: number;
   /** Set when the work is a member join rather than a message; `message.senderId` is the joiner. */
   join?: JoinedMember;
@@ -33,6 +34,8 @@ interface GuardOptions {
   crownThresholdPercent: number;
   /** Judges a picture by its OpenChat CDN hash when the backend cannot; null means no picture. */
   crown?: (pictureHash: string) => Promise<number | null>;
+  /** Optional second opinion on a flagged message's intent; false drops the alert. */
+  review?: (text: string, probability: number) => Promise<boolean>;
   /** Test clock seams; production observes LINE.js's shared 10 checks/minute and 20 sends/minute. */
   checkIntervalMs?: number;
   sendIntervalMs?: number;
@@ -170,6 +173,8 @@ export class ScamGuard extends EventEmitter {
     const work: Work = {
       key, signature, generation: this.generation,
       message: { messageId: message.messageId, channelId: message.channelId, senderId: message.senderId },
+      // Kept only for the optional reviewer and dropped as soon as the analysis reads it.
+      ...(this.options.review && message.text ? { reviewText: message.text } : {}),
     };
     this.track(work);
   }
@@ -293,6 +298,9 @@ export class ScamGuard extends EventEmitter {
   }
 
   private async inspect(work: Work): Promise<void> {
+    // Held only for this one analysis: never kept in the recent-work table.
+    const reviewText = work.reviewText;
+    work.reviewText = undefined;
     if (!this.current(work)) return;
     const message = work.message;
     if (!this.ownMembers.has(message.channelId)) {
@@ -318,6 +326,21 @@ export class ScamGuard extends EventEmitter {
     if (!this.current(work)) return;
     const analysis = parseAnalysis(result, message);
     if (analysis.probability < this.options.thresholdPercent / 100) return;
+    // Second opinion on intent so ordinary talk the detector over-scored does not alert admins.
+    if (this.options.review && reviewText?.trim()) {
+      let real: boolean;
+      try {
+        real = await this.options.review(reviewText, analysis.probability);
+      } catch (error) {
+        // A failed review must not hide a detector hit: alert as if no reviewer were configured.
+        if (!this.current(work)) return;
+        this.emit("notice", error instanceof Error && /^REVIEW_[A-Z_]+$/.test(error.message) ? error.message : "REVIEW_FAILED");
+        real = true;
+      }
+      if (!this.current(work)) return;
+      this.emit("review", { probability: analysis.probability, scam: real });
+      if (!real) return;
+    }
     this.enqueue({
       work, event: { kind: "scam", probability: analysis.probability },
       build: admins => buildAlerts(message, analysis, admins),

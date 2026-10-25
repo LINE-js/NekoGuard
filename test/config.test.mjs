@@ -103,3 +103,18 @@ test('the TypeSafe key is optional, environment-overridable and validated withou
     else process.env.NEKOGUARD_JEV_TOKEN = previous;
   }
 });
+
+test('the review key is optional, environment-overridable, defaults to claude-haiku-5-5 and is validated', async () => {
+  const previous = process.env.NEKOGUARD_REVIEW_API_KEY;
+  delete process.env.NEKOGUARD_REVIEW_API_KEY;
+  try {
+    await withConfig(yaml(), async (path) => assert.equal((await loadConfig(path)).review, undefined));
+    await withConfig(`${yaml()}review:\n  apiKey: sk-file\n`, async (path) => assert.deepEqual((await loadConfig(path)).review, { apiKey: 'sk-file', model: 'claude-haiku-5-5' }));
+    process.env.NEKOGUARD_REVIEW_API_KEY = 'sk-env';
+    await withConfig(`${yaml()}review:\n  apiKey: sk-file\n  model: claude-x\n`, async (path) => assert.deepEqual((await loadConfig(path)).review, { apiKey: 'sk-env', model: 'claude-x' }));
+    process.env.NEKOGUARD_REVIEW_API_KEY = 'bad key';
+    await withConfig(yaml(), async (path) => assert.rejects(loadConfig(path), (error) => /review\.apiKey/.test(error.message) && !error.message.includes('bad key')));
+  } finally {
+    if (previous === undefined) delete process.env.NEKOGUARD_REVIEW_API_KEY; else process.env.NEKOGUARD_REVIEW_API_KEY = previous;
+  }
+});

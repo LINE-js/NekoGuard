@@ -37,7 +37,7 @@ function harness(options = {}) {
     }
     throw new Error('unexpected request');
   } };
-  const guard = new ScamGuard(api, { thresholdPercent: options.threshold ?? 70, crownThresholdPercent: options.crownThreshold ?? 70, checkIntervalMs: 0, sendIntervalMs: 0, adminIntervalMs: 0, ...options.intervals });
+  const guard = new ScamGuard(api, { thresholdPercent: options.threshold ?? 70, crownThresholdPercent: options.crownThreshold ?? 70, ...(options.review ? { review: options.review } : {}), checkIntervalMs: 0, sendIntervalMs: 0, adminIntervalMs: 0, ...options.intervals });
   guard.on('notice', code => notices.push(code));
   guard.on('fatal', code => notices.push(code));
   const ready = () => {
@@ -812,4 +812,33 @@ test('every judged join reports its verdict, including ones that raise no alert'
   await h.guard.whenIdle();
   assert.deepEqual(verdicts, [{ chatId, memberId: joinerId, crown: 0.1, crownHit: false, nameHit: false, alert: false }]);
   assert.equal(h.sends.length, 0);
+});
+
+test('a reviewer that finds no scam intent drops the alert; a real one lets it through', async () => {
+  const seen = [];
+  for (const verdict of [false, true]) {
+    const h = harness({ probability: 0.9, review: async (text, probability) => { seen.push([text, probability]); return verdict; } });
+    const reviews = [];
+    h.guard.on('review', review => reviews.push(review));
+    h.guard.handle({ type: 'message', message: message(1) });
+    await h.guard.whenIdle();
+    assert.equal(h.sends.length, verdict ? 1 : 0);
+    assert.deepEqual(reviews, [{ probability: 0.9, scam: verdict }]);
+  }
+  assert.deepEqual(seen, [['投資邀請', 0.9], ['投資邀請', 0.9]]);
+});
+
+test('a failed review still alerts and reports a code; below-threshold messages are never reviewed', async () => {
+  const failing = harness({ probability: 0.9, review: async () => { throw new Error('REVIEW_FAILED'); } });
+  failing.guard.handle({ type: 'message', message: message(1) });
+  await failing.guard.whenIdle();
+  assert.equal(failing.sends.length, 1);
+  assert.ok(failing.notices.includes('REVIEW_FAILED'));
+
+  let reviewed = 0;
+  const low = harness({ probability: 0.5, review: async () => { reviewed += 1; return true; } });
+  low.guard.handle({ type: 'message', message: message(2) });
+  await low.guard.whenIdle();
+  assert.equal(reviewed, 0);
+  assert.equal(low.sends.length, 0);
 });

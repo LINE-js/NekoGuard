@@ -3,6 +3,7 @@ import { ApiClient } from "./client.js";
 import { loadConfig } from "./config.js";
 import { ScamGuard, type AlertEvent } from "./guard.js";
 import { CrownChecker } from "./jev.js";
+import { IntentReviewer } from "./review.js";
 
 async function main(): Promise<void> {
   const { values } = parseArgs({ options: { config: { type: "string", default: "config.yaml" }, help: { type: "boolean" } } });
@@ -20,6 +21,7 @@ async function main(): Promise<void> {
     return;
   }
   const crownChecker = config.jev ? new CrownChecker(config.jev) : undefined;
+  const reviewer = config.review ? new IntentReviewer(config.review) : undefined;
   let stopped = false;
   let retryTimer: NodeJS.Timeout | undefined;
   let closeSession = () => {};
@@ -40,6 +42,7 @@ async function main(): Promise<void> {
       thresholdPercent: config.detection.thresholdPercent,
       crownThresholdPercent: config.detection.crownThresholdPercent,
       ...(crownChecker ? { crown: (hash: string) => crownChecker.check(hash) } : {}),
+      ...(reviewer ? { review: (text: string, probability: number) => reviewer.isScam(text, probability) } : {}),
     });
     let closed = false;
     const helloDeadline = setTimeout(() => retry("LINEJS_HELLO_TIMEOUT"), 25_000);
@@ -74,6 +77,9 @@ async function main(): Promise<void> {
       // Codes and numbers only: never the member's name or message text.
       if (event.kind === "scam") console.info(`SCAM_ALERT_SENT probability=${event.probability * 100}% admins=${event.mentioned}/${event.total}`);
       else console.info(`JOIN_ALERT_SENT crown=${typeof event.crown === "number" ? `${event.crown * 100}%` : event.crown === null ? "none" : "unknown"} name=${event.nameHit} admins=${event.mentioned}/${event.total}`);
+    });
+    guard.on("review", (event: { probability: number; scam: boolean }) => {
+      if (!closed) console.info(`SCAM_REVIEWED probability=${event.probability * 100}% intent=${event.scam ? "scam" : "dismissed"}`);
     });
     guard.on("join", (event: { chatId: string; memberId: string; crown: number | null | undefined; nameHit: boolean; alert: boolean }) => {
       if (closed) return;
