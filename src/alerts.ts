@@ -24,11 +24,27 @@ export interface Alert {
   replyTo?: string;
 }
 
+/** `basis` says what the mention rests on: the detector alone, a confirmed intent, or a failed review. */
+export type AlertBasis = 'detector' | 'intent' | 'unreviewed';
+
+const basisText: Readonly<Record<AlertBasis, string>> = {
+  detector: '此為模型估計，並非事實判定，請管理員查證。',
+  intent: '發言意圖經分析判定為詐騙；此為模型估計，並非事實判定，請管理員查證。',
+  unreviewed: '發言意圖分析失敗，依詐騙機率通知；此為模型估計，並非事實判定，請管理員查證。',
+};
+
 export function buildAlerts(
   message: Pick<Message, 'messageId'>,
   analysis: ScamAnalysis,
   admins: readonly Admin[],
+  basis: AlertBasis = 'detector',
 ): Alert[] {
+  validate(message, analysis);
+  const header = `疑似詐騙提醒\n訊息 ID：${stripControls(message.messageId)}\n${describe(analysis)}\n${basisText[basis]}\n`;
+  return mentionAdmins(header, admins, message.messageId);
+}
+
+function validate(message: Pick<Message, 'messageId'>, analysis: ScamAnalysis): void {
   if (!analysis || typeof analysis.probability !== 'number' || !Number.isFinite(analysis.probability) || analysis.probability < 0 || analysis.probability > 1) {
     throw new Error('Invalid scam probability; expected a finite value between 0 and 1.');
   }
@@ -39,15 +55,27 @@ export function buildAlerts(
   if (typeof message.messageId !== 'string' || message.messageId.trim() === '' || message.messageId.length > 512) {
     throw new Error('Invalid source message ID.');
   }
+}
+
+/** Stage one: a reply that marks the message for everyone, without mentioning anyone. */
+export function buildMark(message: Pick<Message, 'messageId'>, analysis: ScamAnalysis): Alert {
+  validate(message, analysis);
+  return {
+    text: `疑似詐騙預警\n${describe(analysis)}\n發言意圖分析中；請勿點擊連結、匯款或提供個人資料。此為模型估計，並非事實判定。`,
+    mentions: [],
+    replyTo: message.messageId,
+  };
+}
+
+function describe(analysis: ScamAnalysis): string {
+  const tactic = analysis.tactic;
   // Formatting never participates in the guard's unrounded threshold comparison.
   const probability = percentFormat.format(analysis.probability * 100);
   const label = tactic && Object.hasOwn(tacticLabels, tactic.kind) ? tacticLabels[tactic.kind] : '未能辨識的詐騙手法';
   const tacticText = tactic
     ? `${label}（手法信心度 ${percentFormat.format(tactic.confidence * 100)}%）`
     : '未提供詐騙手法及信心度';
-  const sourceId = stripControls(message.messageId);
-  const header = `疑似詐騙提醒\n訊息 ID：${sourceId}\n詐騙機率：${probability}%\n手法：${tacticText}\n此為模型估計，並非事實判定，請管理員查證。\n`;
-  return mentionAdmins(header, admins, message.messageId);
+  return `詐騙機率：${probability}%\n手法：${tacticText}`;
 }
 
 export interface JoinFindings {

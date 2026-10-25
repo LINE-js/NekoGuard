@@ -814,25 +814,36 @@ test('every judged join reports its verdict, including ones that raise no alert'
   assert.equal(h.sends.length, 0);
 });
 
-test('a reviewer that finds no scam intent drops the alert; a real one lets it through', async () => {
+test('a detector hit is marked at once without mentions; only a scam intent then mentions every admin', async () => {
   const seen = [];
   for (const verdict of [false, true]) {
     const h = harness({ probability: 0.9, review: async (text, probability) => { seen.push([text, probability]); return verdict; } });
-    const reviews = [];
-    h.guard.on('review', review => reviews.push(review));
     h.guard.handle({ type: 'message', message: message(1) });
     await h.guard.whenIdle();
-    assert.equal(h.sends.length, verdict ? 1 : 0);
-    assert.deepEqual(reviews, [{ probability: 0.9, scam: verdict }]);
+    const [mark, ...alerts] = h.sends;
+    assert.equal(mark.replyTo, '1');
+    assert.deepEqual(mark.mentions, []);
+    assert.ok(mark.text.startsWith('疑似詐騙預警\n詐騙機率：90%'));
+    assert.equal(alerts.length, verdict ? 1 : 0);
+    if (verdict) {
+      assert.equal(alerts[0].replyTo, '1');
+      assert.deepEqual(alerts[0].mentions.map(m => m.userId), [admin.userId]);
+      assert.ok(alerts[0].text.includes('發言意圖經分析判定為詐騙'));
+    }
+    // Identity discovery looks up once; the stage-one mark adds none, the mention adds one.
+    assert.equal(h.calls.filter(call => call.type === 'chat:admins:get').length, verdict ? 2 : 1);
   }
   assert.deepEqual(seen, [['投資邀請', 0.9], ['投資邀請', 0.9]]);
 });
 
-test('a failed review still alerts and reports a code; below-threshold messages are never reviewed', async () => {
+test('a failed review still mentions the admins and says the intent was not analysed; below-threshold messages are never reviewed', async () => {
   const failing = harness({ probability: 0.9, review: async () => { throw new Error('REVIEW_FAILED'); } });
   failing.guard.handle({ type: 'message', message: message(1) });
   await failing.guard.whenIdle();
-  assert.equal(failing.sends.length, 1);
+  assert.equal(failing.sends.length, 2);
+  assert.deepEqual(failing.sends[0].mentions, []);
+  assert.equal(failing.sends[1].mentions.length, 1);
+  assert.ok(failing.sends[1].text.includes('發言意圖分析失敗'));
   assert.ok(failing.notices.includes('REVIEW_FAILED'));
 
   let reviewed = 0;
@@ -842,3 +853,13 @@ test('a failed review still alerts and reports a code; below-threshold messages 
   assert.equal(reviewed, 0);
   assert.equal(low.sends.length, 0);
 });
+
+test('without a reviewer a detector hit mentions the admins directly, with no separate mark', async () => {
+  const h = harness({ probability: 0.9 });
+  h.guard.handle({ type: 'message', message: message(1) });
+  await h.guard.whenIdle();
+  assert.equal(h.sends.length, 1);
+  assert.equal(h.sends[0].mentions.length, 1);
+  assert.ok(!h.sends[0].text.includes('發言意圖'));
+});
+

@@ -1,7 +1,7 @@
 import { hash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
-import { buildAlerts, buildJoinAlerts, type Alert } from "./alerts.js";
+import { buildAlerts, buildJoinAlerts, buildMark, type Alert, type AlertBasis } from "./alerts.js";
 import { ApiError } from "./client.js";
 import { isAdminLikeName } from "./names.js";
 import {
@@ -21,12 +21,18 @@ interface Work {
 
 export type AlertEvent =
   | { kind: "scam"; probability: number }
+  /** Stage one: the message was marked in the chat without mentioning anyone. */
+  | { kind: "mark"; probability: number }
   | { kind: "join"; crown: number | null | undefined; nameHit: boolean };
 
 interface Notification {
   work: Work;
   build: (admins: readonly Admin[]) => Alert[];
   event: AlertEvent;
+  /** Queue key when one work sends more than one notification (the stage-one mark). */
+  key?: string;
+  /** Sent without an administrator lookup or mentions. */
+  mark?: boolean;
 }
 
 interface GuardOptions {
@@ -45,6 +51,7 @@ interface GuardOptions {
 const MAX_QUEUE = 500;
 const MAX_RECENT = 5000;
 const MAX_IN_FLIGHT = 4;
+const MARK_SUFFIX = "#mark";
 
 export class ScamGuard extends EventEmitter {
   private ready = false;
@@ -216,6 +223,7 @@ export class ScamGuard extends EventEmitter {
     this.recent.delete(key);
     this.queue.delete(key);
     this.notifications.delete(key);
+    this.notifications.delete(`${key}${MARK_SUFFIX}`);
   }
 
   private async wait(work: Work, milliseconds: number): Promise<void> {
@@ -326,24 +334,36 @@ export class ScamGuard extends EventEmitter {
     if (!this.current(work)) return;
     const analysis = parseAnalysis(result, message);
     if (analysis.probability < this.options.thresholdPercent / 100) return;
-    // Second opinion on intent so ordinary talk the detector over-scored does not alert admins.
-    if (this.options.review && reviewText?.trim()) {
-      let real: boolean;
-      try {
-        real = await this.options.review(reviewText, analysis.probability);
-      } catch (error) {
-        // A failed review must not hide a detector hit: alert as if no reviewer were configured.
-        if (!this.current(work)) return;
-        this.emit("notice", error instanceof Error && /^REVIEW_[A-Z_]+$/.test(error.message) ? error.message : "REVIEW_FAILED");
-        real = true;
-      }
-      if (!this.current(work)) return;
-      this.emit("review", { probability: analysis.probability, scam: real });
-      if (!real) return;
+    if (!this.options.review || !reviewText?.trim()) {
+      this.enqueue({
+        work, event: { kind: "scam", probability: analysis.probability },
+        build: admins => buildAlerts(message, analysis, admins),
+      });
+      return;
     }
+    // Stage one: mark the message in the chat right away, mentioning no one.
+    this.enqueue({
+      work, key: `${work.key}${MARK_SUFFIX}`, mark: true,
+      event: { kind: "mark", probability: analysis.probability },
+      build: () => [buildMark(message, analysis)],
+    });
+    // Stage two: only a scam intent in the wording brings the administrators in.
+    let verdict: boolean | undefined;
+    try {
+      verdict = await this.options.review(reviewText, analysis.probability);
+    } catch (error) {
+      // A failed review must not hide a detector hit: mention the admins and say so.
+      if (!this.current(work)) return;
+      this.emit("notice", error instanceof Error && /^REVIEW_[A-Z_]+$/.test(error.message) ? error.message : "REVIEW_FAILED");
+      verdict = undefined;
+    }
+    if (!this.current(work)) return;
+    this.emit("review", { probability: analysis.probability, scam: verdict !== false });
+    if (verdict === false) return;
+    const basis: AlertBasis = verdict === true ? "intent" : "unreviewed";
     this.enqueue({
       work, event: { kind: "scam", probability: analysis.probability },
-      build: admins => buildAlerts(message, analysis, admins),
+      build: admins => buildAlerts(message, analysis, admins, basis),
     });
   }
 
@@ -411,7 +431,7 @@ export class ScamGuard extends EventEmitter {
       this.emit("notice", "NOTIFICATION_QUEUE_FULL");
       return;
     }
-    this.notifications.set(notification.work.key, notification);
+    this.notifications.set(notification.key ?? notification.work.key, notification);
   }
 
   private async notify(notification: Notification): Promise<void> {
@@ -419,10 +439,14 @@ export class ScamGuard extends EventEmitter {
     if (!this.current(work)) return;
     const message = work.message;
     // Roles may change while Jev is answering; never reuse the discovery list for notification.
-    const members = await this.fetchAdmins(work);
-    if (!members) return;
-    if (message.senderId === members.ownMemberId) return;
-    const alerts = notification.build(members.admins);
+    let admins: readonly Admin[] = [];
+    if (!notification.mark) {
+      const members = await this.fetchAdmins(work);
+      if (!members) return;
+      if (message.senderId === members.ownMemberId) return;
+      admins = members.admins;
+    }
+    const alerts = notification.build(admins);
     let sent = 0;
     for (const alert of alerts) {
       while (this.nextSend > performance.now()) {
@@ -434,7 +458,7 @@ export class ScamGuard extends EventEmitter {
       await this.api.request("message:send", { chatId: message.channelId, ...alert }, "sent");
       if (!this.current(work)) return;
       sent += alert.mentions.length;
-      this.emit("alert", { ...notification.event, mentioned: sent, total: members.admins.length });
+      this.emit("alert", { ...notification.event, mentioned: sent, total: admins.length });
     }
   }
 

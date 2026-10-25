@@ -69,7 +69,7 @@ jev: # 選填；後端為內建 chat:member-joined 的 LINE.js 時，皇冠判�
   model: jev-1.13.0
 ```
 
-**意圖複判**:設定 `review.apiKey` 後,詐騙訊息經 Jev 判定達門檻,會把該則文字連同 Jev 機率送交 Anthropic 的 Claude(預設 `claude-haiku-5-5`)再判一次發言意圖;判為非詐騙就不通知,log 記 `SCAM_REVIEWED probability=…% intent=dismissed`。複判失敗或回應格式不符時照常通知並記 `REVIEW_FAILED`/`REVIEW_INVALID_RESPONSE`。訊息文字只在送出複判時暫存,不寫入 log;金鑰只放在 `config.yaml` 或環境變數。僅適用詐騙訊息,不影響新成員檢查。
+**兩階段判斷**:設定 `review.apiKey` 後,詐騙訊息分兩階段處理。第一階段:Jev 機率達 `thresholdPercent` 時,立刻回覆該則訊息標注「疑似詐騙預警」(附機率與手法、提醒勿點連結或匯款),**不 @ 任何人**,也不查管理員;log 記 `SCAM_MARKED probability=…%`。第二階段:把該則文字送交 Claude(預設 `claude-haiku-5-5`)分析話語中是否有引導他人受騙的意圖,連結、價格或邀請本身不算證據;判定為詐騙才再回覆一則「疑似詐騙提醒」並 @ 所有管理員(log `SCAM_REVIEWED … intent=scam` 與 `SCAM_ALERT_SENT`),否則只留第一階段標注(`intent=dismissed`)。複判失敗或回應格式不符時仍 @ 管理員,訊息註明「發言意圖分析失敗」,並記 `REVIEW_FAILED`/`REVIEW_INVALID_RESPONSE`。未設定金鑰時維持單一階段:達門檻直接 @ 管理員。訊息文字只在送出複判時暫存,不寫入 log;僅適用詐騙訊息,不影響新成員檢查。
 
 `NEKOGUARD_API_TOKEN` 環境變數可覆蓋 `api.token`；空 Token 會拒絕啟動。`config.yaml` 已列入 `.gitignore`，請保持權限 `600`。遠端連線必須使用 `wss://`，只有本機回送位址允許 `ws://`；URL 不得夾帶金鑰、query 或 fragment。
 
