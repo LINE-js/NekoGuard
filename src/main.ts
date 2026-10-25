@@ -42,6 +42,7 @@ async function main(): Promise<void> {
       thresholdPercent: config.detection.thresholdPercent,
       crownThresholdPercent: config.detection.crownThresholdPercent,
       ...(crownChecker ? { crown: (hash: string) => crownChecker.check(hash) } : {}),
+      ...(config.detection.directAlertPercent === undefined ? {} : { directAlertPercent: config.detection.directAlertPercent }),
       ...(reviewer ? { review: (text: string, probability: number) => reviewer.isScam(text, probability) } : {}),
     });
     let closed = false;

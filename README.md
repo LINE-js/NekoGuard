@@ -64,12 +64,13 @@ api:
 detection:
   thresholdPercent: 70
   crownThresholdPercent: 70 # 選填，省略時為 70
+  directAlertPercent: 90 # 選填；達此值直接 @ 管理員，不經意圖複判
 jev: # 選填；後端為內建 chat:member-joined 的 LINE.js 時，皇冠判斷需要此金鑰
   token: '' # TypeSafe API key，可改用 NEKOGUARD_JEV_TOKEN
   model: jev-1.13.0
 ```
 
-**兩階段判斷**:設定 `review.apiKey` 後,詐騙訊息分兩階段處理。第一階段:Jev 機率達 `thresholdPercent` 時,立刻回覆該則訊息標注「疑似詐騙預警」(附機率與手法、提醒勿點連結或匯款),**不 @ 任何人**,也不查管理員;log 記 `SCAM_MARKED probability=…%`。第二階段:把該則文字送交 Claude(預設 `claude-haiku-5-5`)分析話語中是否有引導他人受騙的意圖,連結、價格或邀請本身不算證據;判定為詐騙才再回覆一則「疑似詐騙提醒」並 @ 所有管理員(log `SCAM_REVIEWED … intent=scam` 與 `SCAM_ALERT_SENT`),否則只留第一階段標注(`intent=dismissed`)。複判失敗或回應格式不符時仍 @ 管理員,訊息註明「發言意圖分析失敗」,並記 `REVIEW_FAILED`/`REVIEW_INVALID_RESPONSE`。未設定金鑰時維持單一階段:達門檻直接 @ 管理員。訊息文字只在送出複判時暫存,不寫入 log;僅適用詐騙訊息,不影響新成員檢查。
+**兩階段判斷**:設定 `review.apiKey` 後,詐騙訊息分兩階段處理。第一階段:Jev 機率達 `thresholdPercent` 時,立刻回覆該則訊息標注「疑似詐騙預警」(附機率與手法、提醒勿點連結或匯款),**不 @ 任何人**,也不查管理員;log 記 `SCAM_MARKED probability=…%`。第二階段:把該則文字送交 Claude(預設 `claude-haiku-5-5`)分析話語中是否有引導他人受騙的意圖,連結、價格或邀請本身不算證據;判定為詐騙才再回覆一則「疑似詐騙提醒」並 @ 所有管理員(log `SCAM_REVIEWED … intent=scam` 與 `SCAM_ALERT_SENT`),否則只留第一階段標注(`intent=dismissed`)。複判失敗或回應格式不符時仍 @ 管理員,訊息註明「發言意圖分析失敗」,並記 `REVIEW_FAILED`/`REVIEW_INVALID_RESPONSE`。未設定金鑰時維持單一階段:達門檻直接 @ 管理員。另可設定 `detection.directAlertPercent`（選填，不得低於 `thresholdPercent`）：Jev 機率達此值時跳過標注與複判，直接 @ 所有管理員；省略則所有命中都走兩階段。訊息文字只在送出複判時暫存,不寫入 log;僅適用詐騙訊息,不影響新成員檢查。
 
 `NEKOGUARD_API_TOKEN` 環境變數可覆蓋 `api.token`；空 Token 會拒絕啟動。`config.yaml` 已列入 `.gitignore`，請保持權限 `600`。遠端連線必須使用 `wss://`，只有本機回送位址允許 `ws://`；URL 不得夾帶金鑰、query 或 fragment。
 

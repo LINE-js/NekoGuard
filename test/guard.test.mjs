@@ -37,7 +37,7 @@ function harness(options = {}) {
     }
     throw new Error('unexpected request');
   } };
-  const guard = new ScamGuard(api, { thresholdPercent: options.threshold ?? 70, crownThresholdPercent: options.crownThreshold ?? 70, ...(options.review ? { review: options.review } : {}), checkIntervalMs: 0, sendIntervalMs: 0, adminIntervalMs: 0, ...options.intervals });
+  const guard = new ScamGuard(api, { thresholdPercent: options.threshold ?? 70, crownThresholdPercent: options.crownThreshold ?? 70, ...(options.review ? { review: options.review } : {}), ...(options.direct === undefined ? {} : { directAlertPercent: options.direct }), checkIntervalMs: 0, sendIntervalMs: 0, adminIntervalMs: 0, ...options.intervals });
   guard.on('notice', code => notices.push(code));
   guard.on('fatal', code => notices.push(code));
   const ready = () => {
@@ -863,3 +863,13 @@ test('without a reviewer a detector hit mentions the admins directly, with no se
   assert.ok(!h.sends[0].text.includes('發言意圖'));
 });
 
+test('at or above the direct alert threshold the admins are mentioned at once without a mark or review; below it the two stages apply', async () => {
+  for (const [probability, expectReview] of [[0.9, false], [0.89, true]]) {
+    let reviewed = 0;
+    const h = harness({ probability, direct: 90, review: async () => { reviewed += 1; return true; } });
+    h.guard.handle({ type: 'message', message: message(1) });
+    await h.guard.whenIdle();
+    assert.equal(reviewed, expectReview ? 1 : 0);
+    assert.deepEqual(h.sends.map(send => send.mentions.length), expectReview ? [0, 1] : [1]);
+  }
+});

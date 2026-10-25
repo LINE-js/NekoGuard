@@ -118,3 +118,10 @@ test('the review key is optional, environment-overridable, defaults to claude-ha
     if (previous === undefined) delete process.env.NEKOGUARD_REVIEW_API_KEY; else process.env.NEKOGUARD_REVIEW_API_KEY = previous;
   }
 });
+
+test('the direct alert threshold is optional and may not sit below the scam threshold', async () => {
+  await withConfig(yaml('60'), async (path) => assert.equal((await loadConfig(path)).detection.directAlertPercent, undefined));
+  await withConfig(`${yaml('60')}`.replace('detection:\n', 'detection:\n  directAlertPercent: 90\n'), async (path) => assert.equal((await loadConfig(path)).detection.directAlertPercent, 90));
+  await withConfig(`${yaml('60')}`.replace('detection:\n', 'detection:\n  directAlertPercent: 50\n'), async (path) => assert.rejects(loadConfig(path), /directAlertPercent/));
+  await withConfig(`${yaml('60')}`.replace('detection:\n', 'detection:\n  directAlertPercent: 101\n'), async (path) => assert.rejects(loadConfig(path), /directAlertPercent/));
+});

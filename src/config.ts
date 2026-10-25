@@ -3,7 +3,8 @@ import { parse } from 'yaml';
 
 export interface Config {
   api: { url: string; token: string };
-  detection: { thresholdPercent: number; crownThresholdPercent: number };
+  /** `directAlertPercent`: at or above it the admins are mentioned at once, skipping the intent review. */
+  detection: { thresholdPercent: number; crownThresholdPercent: number; directAlertPercent?: number };
   /** Present only when a TypeSafe key is configured: crown checks for backends that cannot judge pictures. */
   jev?: { token: string; model: string };
   /** Present only when an Anthropic key is configured: second opinion on flagged messages. */
@@ -62,6 +63,12 @@ export async function loadConfig(path = 'config.yaml'): Promise<Config> {
   // Optional so existing configurations keep working; the crown check is a separate decision.
   const crownThresholdPercent = value.detection.crownThresholdPercent === undefined
     ? 70 : percent(value.detection.crownThresholdPercent, 'detection.crownThresholdPercent');
+  // Optional: absent means every hit goes through the intent review when one is configured.
+  const directAlertPercent = value.detection.directAlertPercent === undefined
+    ? undefined : percent(value.detection.directAlertPercent, 'detection.directAlertPercent');
+  if (directAlertPercent !== undefined && directAlertPercent < thresholdPercent) {
+    throw new Error('detection.directAlertPercent must not be below detection.thresholdPercent.');
+  }
   const jev = value.jev === undefined || value.jev === null ? {} : value.jev;
   if (!object(jev)) throw new Error('jev must be a mapping when present.');
   const jevToken = process.env.NEKOGUARD_JEV_TOKEN ?? jev.token ?? '';
@@ -80,7 +87,8 @@ export async function loadConfig(path = 'config.yaml'): Promise<Config> {
   const reviewModel = review.model ?? 'claude-haiku-5-5';
   if (typeof reviewModel !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(reviewModel)) throw new Error('review.model must be a model name.');
   return {
-    api: { url, token }, detection: { thresholdPercent, crownThresholdPercent },
+    api: { url, token },
+    detection: { thresholdPercent, crownThresholdPercent, ...(directAlertPercent === undefined ? {} : { directAlertPercent }) },
     ...(jevToken ? { jev: { token: jevToken, model } } : {}),
     ...(reviewKey ? { review: { apiKey: reviewKey, model: reviewModel } } : {}),
   };

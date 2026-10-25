@@ -38,6 +38,8 @@ interface Notification {
 interface GuardOptions {
   thresholdPercent: number;
   crownThresholdPercent: number;
+  /** At or above this Jev percentage the admins are mentioned at once, skipping the intent review. */
+  directAlertPercent?: number;
   /** Judges a picture by its OpenChat CDN hash when the backend cannot; null means no picture. */
   crown?: (pictureHash: string) => Promise<number | null>;
   /** Optional second opinion on a flagged message's intent; false drops the alert. */
@@ -334,7 +336,10 @@ export class ScamGuard extends EventEmitter {
     if (!this.current(work)) return;
     const analysis = parseAnalysis(result, message);
     if (analysis.probability < this.options.thresholdPercent / 100) return;
-    if (!this.options.review || !reviewText?.trim()) {
+    // Very high scores, or no reviewer at all, mention the admins at once without a separate mark.
+    const direct = this.options.directAlertPercent !== undefined
+      && analysis.probability >= this.options.directAlertPercent / 100;
+    if (direct || !this.options.review || !reviewText?.trim()) {
       this.enqueue({
         work, event: { kind: "scam", probability: analysis.probability },
         build: admins => buildAlerts(message, analysis, admins),
