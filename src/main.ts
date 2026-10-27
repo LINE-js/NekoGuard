@@ -2,7 +2,7 @@ import { parseArgs } from "node:util";
 import { ApiClient } from "./client.js";
 import { loadConfig } from "./config.js";
 import { ScamGuard, type AlertEvent } from "./guard.js";
-import { CrownChecker } from "./jev.js";
+import { CrownChecker, ScamChecker } from "./jev.js";
 import { IntentReviewer } from "./review.js";
 
 async function main(): Promise<void> {
@@ -21,6 +21,8 @@ async function main(): Promise<void> {
     return;
   }
   const crownChecker = config.jev ? new CrownChecker(config.jev) : undefined;
+  // LINE.js no longer offers `scam:check`: with a TypeSafe key NekoGuard analyzes messages itself.
+  const scamChecker = config.jev ? new ScamChecker(config.jev) : undefined;
   const reviewer = config.review ? new IntentReviewer(config.review) : undefined;
   let stopped = false;
   let retryTimer: NodeJS.Timeout | undefined;
@@ -42,6 +44,7 @@ async function main(): Promise<void> {
       thresholdPercent: config.detection.thresholdPercent,
       crownThresholdPercent: config.detection.crownThresholdPercent,
       ...(crownChecker ? { crown: (hash: string) => crownChecker.check(hash) } : {}),
+      ...(scamChecker ? { scam: (text: string) => scamChecker.check(text) } : {}),
       ...(config.detection.directAlertPercent === undefined ? {} : { directAlertPercent: config.detection.directAlertPercent }),
       ...(reviewer ? { review: (text: string, probability: number) => reviewer.isScam(text, probability) } : {}),
     });

@@ -6,14 +6,15 @@ import { ApiError } from "./client.js";
 import { isAdminLikeName } from "./names.js";
 import {
   isMessage, parseAdmins, parseAnalysis, parseAvatar, parseJoin, record,
-  type Admin, type Api, type Frame, type JoinedMember, type Message,
+  type Admin, type Api, type Frame, type JoinedMember, type Message, type ScamAnalysis,
 } from "./protocol.js";
 
 interface Work {
   key: string;
   signature: string;
   message: Pick<Message, "messageId" | "channelId" | "senderId">;
-  reviewText?: string;
+  /** Kept only until the analysis starts: for the local Jev check and the reviewer. */
+  text?: string;
   generation: number;
   /** Set when the work is a member join rather than a message; `message.senderId` is the joiner. */
   join?: JoinedMember;
@@ -42,6 +43,8 @@ interface GuardOptions {
   directAlertPercent?: number;
   /** Judges a picture by its OpenChat CDN hash when the backend cannot; null means no picture. */
   crown?: (pictureHash: string) => Promise<number | null>;
+  /** Judges message text locally; without it the backend's `scam:check` is used. */
+  scam?: (text: string) => Promise<ScamAnalysis>;
   /** Optional second opinion on a flagged message's intent; false drops the alert. */
   review?: (text: string, probability: number) => Promise<boolean>;
   /** Test clock seams; production observes LINE.js's shared 10 checks/minute and 20 sends/minute. */
@@ -60,6 +63,8 @@ export class ScamGuard extends EventEmitter {
   private supported = false;
   private joinsSupported = false;
   private avatarViaBackend = false;
+  /** Newer LINE.js (built-in joins) removed `scam:check`; asking it would only time out. */
+  private scamViaBackend = false;
   private joinSequence = 0;
   private userId?: string;
   private generation = 0;
@@ -91,9 +96,11 @@ export class ScamGuard extends EventEmitter {
       // The NekoGuard patch also judges pictures; newer LINE.js only announces joins.
       this.avatarViaBackend = this.supported && capabilities.includes("member:join");
       this.joinsSupported = this.avatarViaBackend || (this.supported && capabilities.includes("chat:member-joined"));
+      this.scamViaBackend = this.supported && !capabilities.includes("chat:member-joined");
       // Scam monitoring still works against an older extension; only join checks are unavailable.
       if (this.supported && !this.joinsSupported) this.emit("notice", "LINEJS_MEMBER_JOIN_EXTENSION_REQUIRED");
       else if (this.joinsSupported && !this.avatarViaBackend && !this.options.crown) this.emit("notice", "CROWN_CHECK_DISABLED");
+      if (this.supported && !this.scamViaBackend && !this.options.scam) this.emit("notice", "SCAM_CHECK_DISABLED");
       return;
     }
     if (frame.type === "auth:state" && frame.state !== "ready") {
@@ -160,7 +167,8 @@ export class ScamGuard extends EventEmitter {
       this.track(work);
       return;
     }
-    if ((frame.type !== "message" && frame.type !== "message:edit") || !isMessage(frame.message) || !this.ready) return;
+    if ((frame.type !== "message" && frame.type !== "message:edit") || !isMessage(frame.message) || !this.ready
+      || (!this.options.scam && !this.scamViaBackend)) return;
     const message = frame.message;
     const key = `${message.channelId}:${message.messageId}`;
     if (message.unsent || message.decryptFailed || message.contentType !== "NONE" || !message.text?.trim()) {
@@ -178,12 +186,12 @@ export class ScamGuard extends EventEmitter {
       this.emit("notice", "ANALYSIS_QUEUE_FULL");
       return;
     }
-    // Analysis uses the backend's cached text; retain no incoming payload or sender name.
+    // Retain no sender name; the text only when NekoGuard itself must read it.
     const work: Work = {
       key, signature, generation: this.generation,
       message: { messageId: message.messageId, channelId: message.channelId, senderId: message.senderId },
-      // Kept only for the optional reviewer and dropped as soon as the analysis reads it.
-      ...(this.options.review && message.text ? { reviewText: message.text } : {}),
+      // Dropped as soon as the analysis reads it.
+      ...(this.options.scam || this.options.review ? { text: message.text } : {}),
     };
     this.track(work);
   }
@@ -309,8 +317,8 @@ export class ScamGuard extends EventEmitter {
 
   private async inspect(work: Work): Promise<void> {
     // Held only for this one analysis: never kept in the recent-work table.
-    const reviewText = work.reviewText;
-    work.reviewText = undefined;
+    const text = work.text;
+    work.text = undefined;
     if (!this.current(work)) return;
     const message = work.message;
     if (!this.ownMembers.has(message.channelId)) {
@@ -330,16 +338,29 @@ export class ScamGuard extends EventEmitter {
     if (message.senderId === this.userId || message.senderId === this.ownMembers.get(message.channelId)) return;
     if (work.join) return this.inspectJoin(work, work.join);
     if (!await this.reserveCheck(work)) return;
-    const result = await this.api.request("scam:check", {
-      chatId: message.channelId, messageId: message.messageId,
-    }, "scam:result");
-    if (!this.current(work)) return;
-    const analysis = parseAnalysis(result, message);
+    let analysis: ScamAnalysis;
+    if (this.options.scam) {
+      try {
+        analysis = await this.options.scam(text ?? "");
+      } catch (error) {
+        if (!this.current(work)) return;
+        // Only our own fixed codes: never the text, response body or key.
+        this.emit("notice", error instanceof Error && /^SCAM_[A-Z_]+$/.test(error.message) ? error.message : "SCAM_CHECK_FAILED");
+        return;
+      }
+      if (!this.current(work)) return;
+    } else {
+      const result = await this.api.request("scam:check", {
+        chatId: message.channelId, messageId: message.messageId,
+      }, "scam:result");
+      if (!this.current(work)) return;
+      analysis = parseAnalysis(result, message);
+    }
     if (analysis.probability < this.options.thresholdPercent / 100) return;
     // Very high scores, or no reviewer at all, mention the admins at once without a separate mark.
     const direct = this.options.directAlertPercent !== undefined
       && analysis.probability >= this.options.directAlertPercent / 100;
-    if (direct || !this.options.review || !reviewText?.trim()) {
+    if (direct || !this.options.review || !text?.trim()) {
       this.enqueue({
         work, event: { kind: "scam", probability: analysis.probability },
         build: admins => buildAlerts(message, analysis, admins),
@@ -355,7 +376,7 @@ export class ScamGuard extends EventEmitter {
     // Stage two: only a scam intent in the wording brings the administrators in.
     let verdict: boolean | undefined;
     try {
-      verdict = await this.options.review(reviewText, analysis.probability);
+      verdict = await this.options.review(text, analysis.probability);
     } catch (error) {
       // A failed review must not hide a detector hit: mention the admins and say so.
       if (!this.current(work)) return;

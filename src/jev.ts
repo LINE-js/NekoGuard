@@ -1,3 +1,4 @@
+import type { ScamAnalysis } from "./protocol.js";
 import { randomUUID } from "node:crypto";
 
 const ENDPOINT = "https://api.typesafe.ai/v1/systemone";
@@ -108,4 +109,90 @@ async function readLimited(response: Response, limit: number): Promise<Buffer> {
     }
   }
   return Buffer.concat(chunks, size);
+}
+
+// TypeSafe documents English as the language Jev answers most accurately in, so the questions are
+// English; the message itself is sent as it is.
+const TACTICS = {
+  investment: "Investment, stock tips, crypto or get-rich-quick schemes, invitations to investment groups",
+  impersonation: "Pretending to be a government agency, police, prosecutor, bank, telecom, delivery company or customer service",
+  phishing: "A link or request to log in, verify an account, or hand over passwords, verification codes or card numbers",
+  shopping: "Online shopping or payment problems, cancelling installments, fake sellers or buyers",
+  friend: "Pretending to be a friend or relative who urgently needs money, or a hijacked account asking for money",
+  romance: "Online dating or romance that leads to requests for money",
+  job: "Part-time jobs, easy work for high pay, or renting out bank accounts, cards or phone numbers",
+  prize: "Lottery wins, prizes, rewards or free gifts that require a fee or personal data",
+  loan: "Loans, debt consolidation or credit offers that require fees up front",
+  other: "Any other kind of scam",
+} as const;
+
+const SCAM_QUESTIONS = {
+  scam: {
+    type: "noul",
+    instructions: "Is this chat message a scam or fraud attempt?",
+    criteria: {
+      true: "It tries to deceive the reader into giving money, account credentials, verification codes or personal data, or into clicking, installing or joining something under false pretences.",
+      false: "An ordinary, honest message with no deceptive intent.",
+    },
+  },
+  tactic: {
+    type: "choice",
+    instructions: "If this message were a scam, which kind of scam would it most resemble?",
+    criteria: TACTICS,
+  },
+} as const;
+
+function unit(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
+}
+
+/**
+ * Scam probability of one message, for LINE.js backends without `scam:check` (it moved here).
+ * Only the message text leaves this machine. Errors carry codes only: never the text, body or key.
+ */
+export class ScamChecker {
+  private readonly fetchImpl: typeof fetch;
+  private readonly timeoutMs: number;
+
+  constructor(private readonly options: CrownCheckerOptions) {
+    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.timeoutMs = options.timeoutMs ?? 15_000;
+  }
+
+  async check(text: string): Promise<ScamAnalysis> {
+    let response: Response;
+    try {
+      response = await this.fetchImpl(ENDPOINT, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${this.options.token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: this.options.model, state: text, questions: SCAM_QUESTIONS }),
+        signal: AbortSignal.timeout(this.timeoutMs),
+        // The key must never follow a redirect to some other host.
+        redirect: "error",
+      });
+    } catch {
+      throw new Error("SCAM_CHECK_FAILED");
+    }
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => {});
+      throw new Error("SCAM_CHECK_FAILED");
+    }
+    let answers: unknown;
+    try {
+      const body = await readLimited(response, MAX_BODY_CHARS);
+      answers = (JSON.parse(body.toString("utf8")) as { answers?: unknown } | null)?.answers;
+    } catch {
+      throw new Error("SCAM_CHECK_FAILED");
+    }
+    if (!answers || typeof answers !== "object") throw new Error("SCAM_CHECK_FAILED");
+    const { scam, tactic } = answers as { scam?: { noul?: unknown }; tactic?: { choice?: unknown; confidence?: unknown } };
+    const probability = scam?.noul;
+    if (!unit(probability)) throw new Error("SCAM_CHECK_FAILED");
+    // An unreadable tactic is left out; the probability alone still decides.
+    const kind = tactic?.choice;
+    const confidence = tactic?.confidence;
+    return typeof kind === "string" && Object.hasOwn(TACTICS, kind) && unit(confidence)
+      ? { probability, tactic: { kind, confidence } }
+      : { probability };
+  }
 }

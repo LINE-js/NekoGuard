@@ -11,8 +11,9 @@ detection:
   crownThresholdPercent: 70
   # 選填：Jev 機率達此百分比時跳過意圖複判，直接 @ 所有管理員；不得低於 thresholdPercent，省略則不啟用。
   # directAlertPercent: 90
-# 選填：後端只通知新成員加入（較新的 LINE.js 內建 chat:member-joined）時，
-# NekoGuard 以此 TypeSafe 金鑰自行判斷大頭貼皇冠；NEKOGUARD_JEV_TOKEN 會優先於 jev.token。
+# 後端為較新的 LINE.js（內建 chat:member-joined、已移除 scam:check）時必填：
+# NekoGuard 以此 TypeSafe 金鑰自行判斷訊息詐騙機率與大頭貼皇冠，未設定則不分析訊息。
+# 補丁後端可省略（改用其 scam:check／avatar:check）。NEKOGUARD_JEV_TOKEN 會優先於 jev.token。
 jev:
   token: ''
   model: jev-1.13.0

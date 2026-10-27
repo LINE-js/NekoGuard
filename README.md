@@ -1,6 +1,6 @@
 # NekoGuard
 
-[LINE.js](https://github.com/JS-PACKAGE/LINE.js) 的獨立 Node.js／TypeScript 反詐騙外掛，使用 `/api/ws` 的 `scam:check` 呼叫既有 Jev 系統。詐騙機率達到 `config.yaml` 的門檻（預設 **≥ 70%**）時，重新取得社群當下管理員／共同管理員，在原聊天室回覆來源訊息並真正 @ 提及所有查得的管理員，附上機率、疑似手法與手法信心度。
+[LINE.js](https://github.com/JS-PACKAGE/LINE.js) 的獨立 Node.js／TypeScript 反詐騙外掛，以 Jev（TypeSafe）判斷社群訊息的詐騙機率：設定 `jev.token` 時由 NekoGuard 自行把訊息文字送 TypeSafe（較新的 LINE.js 已移除 `scam:check`，必須如此），否則改用補丁後端 `/api/ws` 的 `scam:check`。詐騙機率達到 `config.yaml` 的門檻（預設 **≥ 70%**）時，重新取得社群當下管理員／共同管理員，在原聊天室回覆來源訊息並真正 @ 提及所有查得的管理員，附上機率、疑似手法與手法信心度。
 
 自己的訊息在付費分析前排除，包含同帳號手機訊息及外掛警示。OpenChat 的 `p…` 成員 ID 與一般帳號的 `u…` ID 分別比對；不能取得自身社群身分時，不猜測、不呼叫 Jev。
 
@@ -65,7 +65,7 @@ detection:
   thresholdPercent: 70
   crownThresholdPercent: 70 # 選填，省略時為 70
   directAlertPercent: 90 # 選填；達此值直接 @ 管理員，不經意圖複判
-jev: # 選填；後端為內建 chat:member-joined 的 LINE.js 時，皇冠判斷需要此金鑰
+jev: # 後端為內建 chat:member-joined 的 LINE.js 時必填：詐騙訊息與皇冠判斷都由 NekoGuard 送 TypeSafe
   token: '' # TypeSafe API key，可改用 NEKOGUARD_JEV_TOKEN
   model: jev-1.13.0
 ```
@@ -82,7 +82,7 @@ jev: # 選填；後端為內建 chat:member-joined 的 LINE.js 時，皇冠判�
 
 `start.sh` 會檢查 Node.js ≥ 22 與 npm，每次依 lockfile 安裝依賴（含編譯需要的 devDependencies）、編譯，再啟動程序；任一步失敗就停止。可從其他目錄呼叫，不會建立或覆蓋 `config.yaml`，也不會自動安裝 Node.js、套用 LINE.js 補丁或啟動 LINE.js。已安裝及編譯完成時，也可用 `npm start` 直接啟動。
 
-設定修改後重新啟動外掛。看見 `MONITORING_READY` 表示 LINE 已登入且後端支援管理員擴充；`SCAM_ALERT_SENT probability=70% admins=20/21` 表示一批通知已由 LINE.js 確認送出（不是管理員已讀）；`JOIN_ALERT_SENT crown=93% name=false admins=1/1` 為新成員提醒（`crown=none` 表示沒有大頭貼、`unknown` 表示未能判定）。每位新成員判讀完成都會記一行 `JOIN_CHECKED chat=… member=… fake_crown=0% name=false alert=false`，未觸發警示也一樣（只記 ID 與結果，不記名稱）。啟動時出現 `LINEJS_MEMBER_JOIN_EXTENSION_REQUIRED` 表示後端沒有任何加入事件：詐騙監測照常，但不檢查新成員；出現 `CROWN_CHECK_DISABLED` 表示後端只通知加入而 NekoGuard 未設定 `jev.token`：仍做名稱檢查，皇冠一律「未能判定」。`SIGINT`／`SIGTERM` 可停止程序。
+設定修改後重新啟動外掛。看見 `MONITORING_READY` 表示 LINE 已登入且後端支援管理員擴充；`SCAM_ALERT_SENT probability=70% admins=20/21` 表示一批通知已由 LINE.js 確認送出（不是管理員已讀）；`JOIN_ALERT_SENT crown=93% name=false admins=1/1` 為新成員提醒（`crown=none` 表示沒有大頭貼、`unknown` 表示未能判定）。每位新成員判讀完成都會記一行 `JOIN_CHECKED chat=… member=… fake_crown=0% name=false alert=false`，未觸發警示也一樣（只記 ID 與結果，不記名稱）。啟動時出現 `LINEJS_MEMBER_JOIN_EXTENSION_REQUIRED` 表示後端沒有任何加入事件：詐騙監測照常，但不檢查新成員；出現 `CROWN_CHECK_DISABLED` 表示後端只通知加入而 NekoGuard 未設定 `jev.token`：仍做名稱檢查，皇冠一律「未能判定」；出現 `SCAM_CHECK_DISABLED` 表示後端是已移除 `scam:check` 的較新 LINE.js 而 NekoGuard 未設定 `jev.token`：不分析訊息（不再對每則訊息等到 `REQUEST_TIMEOUT`）。本機 TypeSafe 詐騙判斷失敗時記 `SCAM_CHECK_FAILED`，不通知。`SIGINT`／`SIGTERM` 可停止程序。
 
 ## 行為與限制
 

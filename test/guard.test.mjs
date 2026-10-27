@@ -37,7 +37,7 @@ function harness(options = {}) {
     }
     throw new Error('unexpected request');
   } };
-  const guard = new ScamGuard(api, { thresholdPercent: options.threshold ?? 70, crownThresholdPercent: options.crownThreshold ?? 70, ...(options.review ? { review: options.review } : {}), ...(options.direct === undefined ? {} : { directAlertPercent: options.direct }), checkIntervalMs: 0, sendIntervalMs: 0, adminIntervalMs: 0, ...options.intervals });
+  const guard = new ScamGuard(api, { thresholdPercent: options.threshold ?? 70, crownThresholdPercent: options.crownThreshold ?? 70, ...(options.review ? { review: options.review } : {}), ...(options.scam ? { scam: options.scam } : {}), ...(options.direct === undefined ? {} : { directAlertPercent: options.direct }), checkIntervalMs: 0, sendIntervalMs: 0, adminIntervalMs: 0, ...options.intervals });
   guard.on('notice', code => notices.push(code));
   guard.on('fatal', code => notices.push(code));
   const ready = () => {
@@ -872,4 +872,30 @@ test('at or above the direct alert threshold the admins are mentioned at once wi
     assert.equal(reviewed, expectReview ? 1 : 0);
     assert.deepEqual(h.sends.map(send => send.mentions.length), expectReview ? [0, 1] : [1]);
   }
+});
+
+test('LINE.js without scam:check: messages are judged locally from their text, never sent as scam:check', async () => {
+  const builtIn = ['chat:admins', 'chat:admin-token', 'chat:member-joined'];
+  const texts = [];
+  const h = harness({ capabilities: builtIn, scam: async text => { texts.push(text); return { probability: 0.9, tactic: { kind: 'investment', confidence: 0.8 } }; } });
+  h.guard.handle({ type: 'message', message: message(1) });
+  await h.guard.whenIdle();
+  assert.deepEqual(texts, ['投資邀請']);
+  assert.equal(h.calls.some(call => call.type === 'scam:check'), false);
+  assert.equal(h.sends.length, 1);
+  assert.ok(h.sends[0].text.includes('詐騙機率：90%'));
+
+  // A failed local check is reported by code and alerts no one.
+  const failing = harness({ capabilities: builtIn, scam: async () => { throw new Error('SCAM_CHECK_FAILED'); } });
+  failing.guard.handle({ type: 'message', message: message(1) });
+  await failing.guard.whenIdle();
+  assert.equal(failing.sends.length, 0);
+  assert.ok(failing.notices.includes('SCAM_CHECK_FAILED'));
+
+  // No key: say so once instead of timing out on every message.
+  const disabled = harness({ capabilities: builtIn });
+  disabled.guard.handle({ type: 'message', message: message(1) });
+  await disabled.guard.whenIdle();
+  assert.ok(disabled.notices.includes('SCAM_CHECK_DISABLED'));
+  assert.deepEqual(disabled.calls, []);
 });
