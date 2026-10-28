@@ -1,7 +1,7 @@
 import { hash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
-import { buildAlerts, buildJoinAlerts, buildMark, buildNoteAlert, type Alert, type AlertBasis } from "./alerts.js";
+import { buildAlerts, buildJoinAlerts, buildMark, buildNoteSubject, buildNoteMark, buildNoteAlerts, type Alert, type AlertBasis } from "./alerts.js";
 import { ApiError } from "./client.js";
 import { isAdminLikeName } from "./names.js";
 import {
@@ -18,8 +18,8 @@ interface Work {
   generation: number;
   /** Set when the work is a member join rather than a message; `message.senderId` is the joiner. */
   join?: JoinedMember;
-  /** Bounded, content-free warning, retained only until the note analysis starts. */
-  noteAlert?: Alert;
+  /** Bounded author label, retained only until the note analysis starts. */
+  noteSubject?: string;
 }
 
 export type AlertEvent =
@@ -201,7 +201,7 @@ export class ScamGuard extends EventEmitter {
       this.track({
         key, signature: "note", generation: this.generation, text: note.text,
         message: { messageId: note.messageId ?? "", channelId: note.chatId, senderId: note.senderId ?? "" },
-        noteAlert: buildNoteAlert(note.senderName ?? ""),
+        noteSubject: buildNoteSubject(note.senderName ?? ""),
       });
       return;
     }
@@ -357,8 +357,8 @@ export class ScamGuard extends EventEmitter {
     // Held only for this one analysis: never kept in the recent-work table.
     const text = work.text;
     work.text = undefined;
-    const noteAlert = work.noteAlert;
-    work.noteAlert = undefined;
+    const noteSubject = work.noteSubject;
+    work.noteSubject = undefined;
     if (!this.current(work)) return;
     const message = work.message;
     const square = this.channels.get(message.channelId) === "square";
@@ -398,8 +398,13 @@ export class ScamGuard extends EventEmitter {
       analysis = parseAnalysis(result, message);
     }
     if (analysis.probability < this.options.thresholdPercent / 100) return;
-    if (noteAlert) {
-      // Notes always require confirmed intent, even above the message-only direct-alert threshold.
+    if (noteSubject) {
+      // Notes always use both stages, even above the message-only direct-alert threshold.
+      this.enqueue({
+        work, key: `${work.key}${MARK_SUFFIX}`, mark: true,
+        event: { kind: "mark", probability: analysis.probability },
+        build: () => [buildNoteMark(noteSubject, analysis)],
+      });
       let verdict: boolean;
       try {
         verdict = await this.options.review!(text!, analysis.probability);
@@ -411,8 +416,8 @@ export class ScamGuard extends EventEmitter {
       if (!this.current(work)) return;
       this.emit("review", { probability: analysis.probability, scam: verdict });
       if (verdict) this.enqueue({
-        work, mark: true, event: { kind: "note", probability: analysis.probability },
-        build: () => [noteAlert],
+        work, mark: !square, event: { kind: "note", probability: analysis.probability },
+        build: admins => buildNoteAlerts(noteSubject, analysis, square ? admins : undefined),
       });
       return;
     }

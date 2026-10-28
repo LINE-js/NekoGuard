@@ -905,33 +905,32 @@ test('LINE.js without scam:check: messages are judged locally from their text, n
   assert.deepEqual(disabled.calls, []);
 });
 
-test('notes require a Jev hit and confirmed intent, including above the message direct threshold; warn without content or mentions', async () => {
+test('note Jev hits produce an unmentioned warning; only confirmed intent mentions admins, even above the direct threshold', async () => {
   for (const [probability, verdict, expectedReviews, expectedSends] of [
-    [0.699999, true, 0, 0], [0.7, false, 1, 0], [0.7, true, 1, 1],
-    [0.99, false, 1, 0], [0.99, true, 1, 1],
+    [0.699999, true, 0, 0], [0.7, false, 1, 1], [0.7, true, 1, 2],
+    [0.99, false, 1, 1], [0.99, true, 1, 2],
   ]) {
     const seen = [];
     let reviews = 0;
     const h = harness({
       direct: 90,
-      scam: async text => { seen.push(text); return { probability }; },
-      review: async (text, score) => {
-        reviews++;
-        assert.equal(text, note().text);
-        assert.equal(score, probability);
-        assert.deepEqual(h.sends, []); // No preliminary warning while intent is unconfirmed.
-        return verdict;
-      },
+      scam: async text => { seen.push(text); return { probability, tactic: { kind: 'investment', confidence: 0.8 } }; },
+      review: async (text, score) => { reviews++; assert.equal(text, note().text); assert.equal(score, probability); return verdict; },
     });
     h.guard.handle(note());
     await h.guard.whenIdle();
-    assert.deepEqual(seen, [note().text]); // Full text, never LINE's abbreviated preview.
+    assert.deepEqual(seen, [note().text]);
     assert.equal(reviews, expectedReviews);
     assert.equal(h.sends.length, expectedSends);
-    if (expectedSends) assert.deepEqual(h.sends[0], {
-      chatId, text: '「小語 Alice」在記事本的文章屬於詐騙。', mentions: [],
-    });
-    assert.equal(h.calls.some(call => call.type === 'scam:check'), false);
+    if (expectedSends) assert.deepEqual(h.sends[0].mentions, []);
+    if (expectedSends === 2) assert.deepEqual(h.sends[1].mentions.map(mention => mention.userId), [admin.userId]);
+    for (const send of h.sends) {
+      assert.ok(send.text.includes('「小語 Alice」'));
+      assert.ok(send.text.includes(`${probability * 100}%`));
+      assert.ok(send.text.includes('投資詐騙'));
+      assert.equal(send.text.includes(note().text), false);
+      assert.equal(send.replyTo, undefined);
+    }
   }
 });
 
@@ -981,7 +980,7 @@ test('notes deduplicate by postId within a chat, including shared notifications 
   h.guard.handle(note({ messageId: '12' }));
   await h.guard.whenIdle();
   assert.equal(checks, 2);
-  assert.deepEqual(h.sends.map(send => send.chatId).sort(), [chatId, other].sort());
+  assert.deepEqual(h.sends.map(send => send.chatId).sort(), [chatId, chatId, other, other].sort());
 });
 
 test('failed note intent review logs only a code and never declares the article a scam', async () => {
@@ -991,7 +990,8 @@ test('failed note intent review logs only a code and never declares the article 
   });
   h.guard.handle(note());
   await h.guard.whenIdle();
-  assert.deepEqual(h.sends, []);
+  assert.equal(h.sends.length, 1);
+  assert.deepEqual(h.sends[0].mentions, []);
   assert.deepEqual(h.notices.filter(code => code !== 'MONITORING_READY'), ['REVIEW_FAILED']);
 });
 
@@ -1008,7 +1008,7 @@ test('note warnings are cancelled by take-back, logout, or chat removal while in
     h.guard.handle(event);
     gate.resolve(true);
     await h.guard.whenIdle();
-    assert.deepEqual(h.sends, []);
+    assert.ok(h.sends.every(send => send.mentions.length === 0));
   }
 });
 
@@ -1026,8 +1026,8 @@ test('group notes use account identity without OpenChat admin lookup, while ordi
   h.guard.handle(note({ chatId: groupId, senderId: 'u' + 'f'.repeat(32) }));
   await h.guard.whenIdle();
   assert.deepEqual(texts, [note().text]);
-  assert.deepEqual(h.calls.map(call => call.type), ['message:send']);
-  assert.deepEqual(h.sends[0], { chatId: groupId, text: '「小語 Alice」在記事本的文章屬於詐騙。', mentions: [] });
+  assert.deepEqual(h.calls.map(call => call.type), ['message:send', 'message:send']);
+  assert.ok(h.sends.every(send => send.chatId === groupId && send.mentions.length === 0 && !send.replyTo && !send.text.includes(note().text)));
 });
 
 test('OpenChat note status events accept no messageId and optional or opaque writer identity; deduplicate across both event sources', async () => {
@@ -1045,8 +1045,9 @@ test('OpenChat note status events accept no messageId and optional or opaque wri
     h.guard.handle(note());
     await h.guard.whenIdle();
     assert.deepEqual(texts, [note().text]);
-    assert.equal(h.sends.length, 1);
+    assert.equal(h.sends.length, 2);
     assert.deepEqual(h.sends[0].mentions, []);
+    assert.deepEqual(h.sends[1].mentions.map(mention => mention.userId), [admin.userId]);
     assert.equal(h.sends[0].replyTo, undefined);
     assert.ok(h.sends[0].text.includes(author.senderName ? '「作者」' : '「（未提供名稱）」'));
     assert.equal(h.sends[0].text.includes(note().text), false);
@@ -1081,9 +1082,31 @@ test('group and message-less OpenChat note reviews are invalidated when their ch
     h.guard.handle({ type: 'channels', channels: [{ channelId: chatId, kind }] });
     h.guard.handle(note({ messageId: undefined }));
     await started.promise;
+    const sentBeforeRemoval = h.sends.length;
     h.guard.handle({ type: 'channels', channels: [] });
     gate.resolve(true);
     await h.guard.whenIdle();
-    assert.deepEqual(h.sends, []);
+    assert.equal(h.sends.length, sentBeforeRemoval);
   }
+});
+
+test('a pending note review does not delay its warning; confirmation refreshes and batches the current admins', async () => {
+  const gate = Promise.withResolvers();
+  const warned = Promise.withResolvers();
+  const h = harness({
+    scam: async () => ({ probability: 0.95 }),
+    review: () => gate.promise,
+    send: async () => { warned.resolve(); return { type: 'sent', messageId: '100' }; },
+  });
+  h.guard.handle(note({ messageId: undefined }));
+  await warned.promise;
+  assert.deepEqual(h.sends[0].mentions, []);
+  const admins = Array.from({ length: 21 }, (_, i) => ({
+    userId: 'p' + String(i).padStart(32, '0'), displayName: `管理員${i}`, role: 'admin',
+  }));
+  h.setAdmins(admins);
+  gate.resolve(true);
+  await h.guard.whenIdle();
+  assert.deepEqual(h.sends.slice(1).flatMap(send => send.mentions.map(mention => mention.userId)), admins.map(admin => admin.userId));
+  assert.ok(h.sends.slice(1).every(send => send.mentions.length <= 20 && !send.replyTo));
 });

@@ -67,12 +67,22 @@ export function buildMark(message: Pick<Message, 'messageId'>, analysis: ScamAna
   };
 }
 
-/** A note warning never quotes the post, replies to its notification, or tags its author. */
-export function buildNoteAlert(displayName: string): Alert {
+/** Only a bounded author label is retained; the post itself is never included. */
+export function buildNoteSubject(displayName: string): string {
+  return `「${cleanName(displayName, '（未提供名稱）')}」在記事本的文章`;
+}
+
+export function buildNoteMark(subject: string, analysis: ScamAnalysis): Alert {
   return {
-    text: `「${cleanName(displayName, '（未提供名稱）')}」在記事本的文章屬於詐騙。`,
+    text: `疑似詐騙預警\n${subject}疑似詐騙。\n${describe(analysis)}\n發文意圖分析中；請勿點擊連結、匯款或提供個人資料。此為模型估計，並非事實判定。`,
     mentions: [],
   };
+}
+
+/** OpenChat mentions current admins; ordinary groups have no administrator API. */
+export function buildNoteAlerts(subject: string, analysis: ScamAnalysis, admins?: readonly Admin[]): Alert[] {
+  const header = `疑似詐騙提醒\n${subject}經意圖分析判定為詐騙。\n${describe(analysis)}\n此為模型估計，並非事實判定，請${admins ? '管理員' : '群組成員'}查證。\n`;
+  return admins ? mentionAdmins(header, admins) : [{ text: header.trimEnd(), mentions: [] }];
 }
 
 function describe(analysis: ScamAnalysis): string {
