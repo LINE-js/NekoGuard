@@ -9,6 +9,11 @@ const userId = 'u' + 'b'.repeat(32);
 const senderId = 'p' + 'c'.repeat(32);
 const admin = { userId: 'p' + 'd'.repeat(32), displayName: '管理員', role: 'admin' };
 const message = (id, extra = {}) => ({ messageId: String(id), channelId: chatId, channelKind: 'square', senderId, senderName: 'Sender', text: '投資邀請', contentType: 'NONE', createdAt: 1, ...extra });
+const note = (extra = {}) => ({
+  type: 'chat:note-posted', chatId, messageId: '10', postId: 'post_1', senderId,
+  senderName: '  小語 Alice  ', createdAt: 1, preview: '投資',
+  text: '加入投資群組，先匯款解鎖保證獲利。', ...extra,
+});
 
 function harness(options = {}) {
   const calls = [];
@@ -898,4 +903,111 @@ test('LINE.js without scam:check: messages are judged locally from their text, n
   await disabled.guard.whenIdle();
   assert.ok(disabled.notices.includes('SCAM_CHECK_DISABLED'));
   assert.deepEqual(disabled.calls, []);
+});
+
+test('notes require a Jev hit and confirmed intent, including above the message direct threshold; warn without content or mentions', async () => {
+  for (const [probability, verdict, expectedReviews, expectedSends] of [
+    [0.699999, true, 0, 0], [0.7, false, 1, 0], [0.7, true, 1, 1],
+    [0.99, false, 1, 0], [0.99, true, 1, 1],
+  ]) {
+    const seen = [];
+    let reviews = 0;
+    const h = harness({
+      direct: 90,
+      scam: async text => { seen.push(text); return { probability }; },
+      review: async (text, score) => {
+        reviews++;
+        assert.equal(text, note().text);
+        assert.equal(score, probability);
+        assert.deepEqual(h.sends, []); // No preliminary warning while intent is unconfirmed.
+        return verdict;
+      },
+    });
+    h.guard.handle(note());
+    await h.guard.whenIdle();
+    assert.deepEqual(seen, [note().text]); // Full text, never LINE's abbreviated preview.
+    assert.equal(reviews, expectedReviews);
+    assert.equal(h.sends.length, expectedSends);
+    if (expectedSends) assert.deepEqual(h.sends[0], {
+      chatId, text: '「小語 Alice」在記事本的文章屬於詐騙。', mentions: [],
+    });
+    assert.equal(h.calls.some(call => call.type === 'scam:check'), false);
+  }
+});
+
+test('notes never analyse previews, empty or malformed posts, unscoped chats, or either own identity', async () => {
+  const seen = [];
+  const h = harness({
+    scam: async text => { seen.push(text); return { probability: 1 }; },
+    review: async () => true,
+  });
+  for (const extra of [
+    { text: undefined, error: 'NOTE_FETCH_FAILED' },
+    { text: undefined }, { text: '' }, { text: ' \n ' }, { text: ['article'] },
+    { postId: '../post' }, { senderName: null }, { messageId: 'bad' },
+    { senderId: userId }, { senderId: ownId },
+    { chatId: 'm' + 'e'.repeat(32) }, { chatId: 'c' + 'e'.repeat(32) },
+  ]) {
+    h.guard.handle(note(extra));
+    await h.guard.whenIdle();
+  }
+  assert.deepEqual(seen, []);
+  assert.deepEqual(h.sends, []);
+  assert.ok(h.notices.includes('NOTE_FETCH_FAILED'));
+});
+
+test('notes need both local Jev and intent review configured, never falling back to the message-only backend check', async () => {
+  for (const options of [{}, { scam: async () => { throw new Error('unexpected paid check'); } }, { review: async () => true }]) {
+    const h = harness({ ...options, capabilities: ['chat:admins', 'chat:member-joined', 'chat:note-posted'] });
+    h.guard.handle(note());
+    await h.guard.whenIdle();
+    assert.ok(h.notices.includes('NOTE_CHECK_DISABLED'));
+    assert.deepEqual(h.calls, []);
+  }
+});
+
+test('notes deduplicate by postId within a chat, including shared notifications with a different messageId', async () => {
+  const other = 'm' + 'e'.repeat(32);
+  let checks = 0;
+  const h = harness({
+    chats: [chatId, other],
+    scam: async () => { checks++; return { probability: 1 }; },
+    review: async () => true,
+  });
+  h.guard.handle(note());
+  h.guard.handle(note({ messageId: '11' }));
+  h.guard.handle(note({ chatId: other }));
+  await h.guard.whenIdle();
+  h.guard.handle(note({ messageId: '12' }));
+  await h.guard.whenIdle();
+  assert.equal(checks, 2);
+  assert.deepEqual(h.sends.map(send => send.chatId).sort(), [chatId, other].sort());
+});
+
+test('failed note intent review logs only a code and never declares the article a scam', async () => {
+  const h = harness({
+    scam: async () => ({ probability: 1 }),
+    review: async () => { throw new Error('private article and provider response'); },
+  });
+  h.guard.handle(note());
+  await h.guard.whenIdle();
+  assert.deepEqual(h.sends, []);
+  assert.deepEqual(h.notices.filter(code => code !== 'MONITORING_READY'), ['REVIEW_FAILED']);
+});
+
+test('note warnings are cancelled by take-back, logout, or chat removal while intent review is pending', async () => {
+  for (const event of [
+    { type: 'message:unsend', chatId, messageId: '10' },
+    { type: 'auth:state', state: 'idle' },
+    { type: 'channels', channels: [] },
+  ]) {
+    const gate = Promise.withResolvers();
+    const h = harness({ scam: async () => ({ probability: 1 }), review: () => gate.promise });
+    h.guard.handle(note());
+    await new Promise(resolve => setImmediate(resolve));
+    h.guard.handle(event);
+    gate.resolve(true);
+    await h.guard.whenIdle();
+    assert.deepEqual(h.sends, []);
+  }
 });

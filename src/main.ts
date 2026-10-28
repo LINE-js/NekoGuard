@@ -81,6 +81,7 @@ async function main(): Promise<void> {
       // Codes and numbers only: never the member's name or message text.
       if (event.kind === "mark") console.info(`SCAM_MARKED probability=${event.probability * 100}%`);
       else if (event.kind === "scam") console.info(`SCAM_ALERT_SENT probability=${event.probability * 100}% admins=${event.mentioned}/${event.total}`);
+      else if (event.kind === "note") console.info(`NOTE_SCAM_ALERT_SENT probability=${event.probability * 100}%`);
       else console.info(`JOIN_ALERT_SENT crown=${typeof event.crown === "number" ? `${event.crown * 100}%` : event.crown === null ? "none" : "unknown"} name=${event.nameHit} admins=${event.mentioned}/${event.total}`);
     });
     guard.on("review", (event: { probability: number; scam: boolean }) => {

@@ -67,6 +67,14 @@ export function buildMark(message: Pick<Message, 'messageId'>, analysis: ScamAna
   };
 }
 
+/** A note warning never quotes the post, replies to its notification, or tags its author. */
+export function buildNoteAlert(displayName: string): Alert {
+  return {
+    text: `「${cleanName(displayName, '（未提供名稱）')}」在記事本的文章屬於詐騙。`,
+    mentions: [],
+  };
+}
+
 function describe(analysis: ScamAnalysis): string {
   const tactic = analysis.tactic;
   // Formatting never participates in the guard's unrounded threshold comparison.

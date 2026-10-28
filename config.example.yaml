@@ -5,20 +5,22 @@ api:
   url: ws://127.0.0.1:3789/api/ws
   token: ''
 detection:
-  # 模型估計達到此百分比才通知管理員；範圍為 0 到 100。
+  # 詐騙文字達到此百分比才進入後續判斷／通知；範圍為 0 到 100。
   thresholdPercent: 70
   # 新成員大頭貼含皇冠的模型估計達到此百分比即通知管理員（名稱含管理員相關字詞亦會通知）；省略時為 70。
   crownThresholdPercent: 70
-  # 選填：Jev 機率達此百分比時跳過意圖複判，直接 @ 所有管理員；不得低於 thresholdPercent，省略則不啟用。
+  # 選填：聊天訊息的 Jev 機率達此百分比時跳過意圖複判，直接 @ 所有管理員；不適用記事，不得低於 thresholdPercent。
   # directAlertPercent: 90
 # 後端為較新的 LINE.js（內建 chat:member-joined、已移除 scam:check）時必填：
 # NekoGuard 以此 TypeSafe 金鑰自行判斷訊息詐騙機率與大頭貼皇冠，未設定則不分析訊息。
 # 補丁後端可省略（改用其 scam:check／avatar:check）。NEKOGUARD_JEV_TOKEN 會優先於 jev.token。
+# 記事本判斷一定需要 NekoGuard 的 jev.token 與 review.apiKey，且後端支援 chat:note-posted。
 jev:
   token: ''
   model: jev-1.13.0
-# 選填:兩階段判斷。Jev 達門檻先回覆標注(不 @ 任何人),再由 Claude 分析發言意圖,判定為詐騙才 @ 所有管理員。
-# NEKOGUARD_REVIEW_API_KEY 會優先於 review.apiKey;未設定金鑰時達門檻直接 @ 管理員。複判失敗時仍會 @ 管理員。
+# 聊天訊息選填:兩階段判斷。Jev 達門檻先回覆標注(不 @ 任何人),再由 Claude 分析發言意圖,判定為詐騙才 @ 所有管理員。
+# NEKOGUARD_REVIEW_API_KEY 會優先於 review.apiKey;聊天未設金鑰或複判失敗時仍會 @ 管理員。
+# 記事必填：命中後一定複判，確認詐騙才發「暱稱」提醒；不貼原文、不 @ 人，複判失敗不發提醒。
 review:
   apiKey: ''
   model: claude-haiku-5-5

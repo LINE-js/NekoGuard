@@ -50,6 +50,31 @@ export function isMessage(value: unknown): value is Message {
     && (value.text === undefined || typeof value.text === "string");
 }
 
+export interface PostedNote {
+  chatId: string;
+  messageId: string;
+  postId: string;
+  senderId: string;
+  senderName: string;
+  text?: string;
+  error?: "NOTE_FETCH_FAILED";
+}
+
+/** Only the full note is analysable; LINE's notification preview may be incomplete. */
+export function parseNote(frame: Frame): PostedNote | undefined {
+  if (typeof frame.chatId !== "string" || !/^[ucrsm][A-Za-z0-9]{10,64}$/.test(frame.chatId)
+    || typeof frame.messageId !== "string" || !/^\d{1,24}$/.test(frame.messageId)
+    || typeof frame.postId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(frame.postId)
+    || typeof frame.senderId !== "string" || !/^[pu][A-Za-z0-9]{10,64}$/.test(frame.senderId)
+    || typeof frame.senderName !== "string"
+    || (frame.error === undefined ? typeof frame.text !== "string" : frame.error !== "NOTE_FETCH_FAILED")) return undefined;
+  return {
+    chatId: frame.chatId, messageId: frame.messageId, postId: frame.postId,
+    senderId: frame.senderId, senderName: frame.senderName,
+    ...(frame.error === "NOTE_FETCH_FAILED" ? { error: frame.error } : { text: frame.text as string }),
+  };
+}
+
 export function parseAdmins(frame: Frame, chatId: string): { admins: Admin[]; ownMemberId: string } {
   if (frame.chatId !== chatId || typeof frame.ownMemberId !== "string"
     || !/^p[A-Za-z0-9]{10,64}$/.test(frame.ownMemberId) || !Array.isArray(frame.admins)) {

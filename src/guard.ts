@@ -1,11 +1,11 @@
 import { hash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
-import { buildAlerts, buildJoinAlerts, buildMark, type Alert, type AlertBasis } from "./alerts.js";
+import { buildAlerts, buildJoinAlerts, buildMark, buildNoteAlert, type Alert, type AlertBasis } from "./alerts.js";
 import { ApiError } from "./client.js";
 import { isAdminLikeName } from "./names.js";
 import {
-  isMessage, parseAdmins, parseAnalysis, parseAvatar, parseJoin, record,
+  isMessage, parseAdmins, parseAnalysis, parseAvatar, parseJoin, parseNote, record,
   type Admin, type Api, type Frame, type JoinedMember, type Message, type ScamAnalysis,
 } from "./protocol.js";
 
@@ -18,13 +18,16 @@ interface Work {
   generation: number;
   /** Set when the work is a member join rather than a message; `message.senderId` is the joiner. */
   join?: JoinedMember;
+  /** Bounded, content-free warning, retained only until the note analysis starts. */
+  noteAlert?: Alert;
 }
 
 export type AlertEvent =
   | { kind: "scam"; probability: number }
   /** Stage one: the message was marked in the chat without mentioning anyone. */
   | { kind: "mark"; probability: number }
-  | { kind: "join"; crown: number | null | undefined; nameHit: boolean };
+  | { kind: "join"; crown: number | null | undefined; nameHit: boolean }
+  | { kind: "note"; probability: number };
 
 interface Notification {
   work: Work;
@@ -101,6 +104,9 @@ export class ScamGuard extends EventEmitter {
       if (this.supported && !this.joinsSupported) this.emit("notice", "LINEJS_MEMBER_JOIN_EXTENSION_REQUIRED");
       else if (this.joinsSupported && !this.avatarViaBackend && !this.options.crown) this.emit("notice", "CROWN_CHECK_DISABLED");
       if (this.supported && !this.scamViaBackend && !this.options.scam) this.emit("notice", "SCAM_CHECK_DISABLED");
+      if (this.supported && capabilities.includes("chat:note-posted") && (!this.options.scam || !this.options.review)) {
+        this.emit("notice", "NOTE_CHECK_DISABLED");
+      }
       return;
     }
     if (frame.type === "auth:state" && frame.state !== "ready") {
@@ -141,8 +147,18 @@ export class ScamGuard extends EventEmitter {
       return;
     }
     if (frame.type === "message:unsend" && typeof frame.chatId === "string" && typeof frame.messageId === "string") {
-      const key = `${frame.chatId}:${frame.messageId}`;
-      const work = this.recent.get(key);
+      let key = `${frame.chatId}:${frame.messageId}`;
+      let work = this.recent.get(key);
+      // Notes are deduplicated by postId, but take-backs refer to their notification's messageId.
+      if (!work) {
+        for (const candidate of this.recent.values()) {
+          if (candidate.message.channelId === frame.chatId && candidate.message.messageId === frame.messageId) {
+            work = candidate;
+            key = candidate.key;
+            break;
+          }
+        }
+      }
       if (work) {
         this.invalidate(key);
         this.recent.set(key, { ...work, signature: "unsent" });
@@ -165,6 +181,28 @@ export class ScamGuard extends EventEmitter {
         message: { messageId: "", channelId: member.chatId, senderId: member.userId },
       };
       this.track(work);
+      return;
+    }
+    if (frame.type === "chat:note-posted") {
+      const note = parseNote(frame);
+      if (!note || !this.ready || !this.options.scam || !this.options.review || !this.channels.has(note.chatId)
+        || note.senderId === this.userId || note.senderId === this.ownMembers.get(note.chatId)) return;
+      const key = `note:${note.chatId}:${note.postId}`;
+      if (this.recent.has(key)) return;
+      if (note.error) {
+        this.emit("notice", note.error);
+        return;
+      }
+      if (!note.text?.trim()) return;
+      if (this.queue.size >= MAX_QUEUE) {
+        this.emit("notice", "ANALYSIS_QUEUE_FULL");
+        return;
+      }
+      this.track({
+        key, signature: "note", generation: this.generation, text: note.text,
+        message: { messageId: note.messageId, channelId: note.chatId, senderId: note.senderId },
+        noteAlert: buildNoteAlert(note.senderName),
+      });
       return;
     }
     if ((frame.type !== "message" && frame.type !== "message:edit") || !isMessage(frame.message) || !this.ready
@@ -319,6 +357,8 @@ export class ScamGuard extends EventEmitter {
     // Held only for this one analysis: never kept in the recent-work table.
     const text = work.text;
     work.text = undefined;
+    const noteAlert = work.noteAlert;
+    work.noteAlert = undefined;
     if (!this.current(work)) return;
     const message = work.message;
     if (!this.ownMembers.has(message.channelId)) {
@@ -357,6 +397,24 @@ export class ScamGuard extends EventEmitter {
       analysis = parseAnalysis(result, message);
     }
     if (analysis.probability < this.options.thresholdPercent / 100) return;
+    if (noteAlert) {
+      // Notes always require confirmed intent, even above the message-only direct-alert threshold.
+      let verdict: boolean;
+      try {
+        verdict = await this.options.review!(text!, analysis.probability);
+      } catch (error) {
+        if (!this.current(work)) return;
+        this.emit("notice", error instanceof Error && /^REVIEW_[A-Z_]+$/.test(error.message) ? error.message : "REVIEW_FAILED");
+        return;
+      }
+      if (!this.current(work)) return;
+      this.emit("review", { probability: analysis.probability, scam: verdict });
+      if (verdict) this.enqueue({
+        work, mark: true, event: { kind: "note", probability: analysis.probability },
+        build: () => [noteAlert],
+      });
+      return;
+    }
     // Very high scores, or no reviewer at all, mention the admins at once without a separate mark.
     const direct = this.options.directAlertPercent !== undefined
       && analysis.probability >= this.options.directAlertPercent / 100;
