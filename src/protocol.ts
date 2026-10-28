@@ -52,10 +52,10 @@ export function isMessage(value: unknown): value is Message {
 
 export interface PostedNote {
   chatId: string;
-  messageId: string;
-  postId: string;
-  senderId: string;
-  senderName: string;
+  messageId?: string;
+  postId?: string;
+  senderId?: string;
+  senderName?: string;
   text?: string;
   error?: "NOTE_FETCH_FAILED";
 }
@@ -63,14 +63,15 @@ export interface PostedNote {
 /** Only the full note is analysable; LINE's notification preview may be incomplete. */
 export function parseNote(frame: Frame): PostedNote | undefined {
   if (typeof frame.chatId !== "string" || !/^[ucrsm][A-Za-z0-9]{10,64}$/.test(frame.chatId)
-    || typeof frame.messageId !== "string" || !/^\d{1,24}$/.test(frame.messageId)
-    || typeof frame.postId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(frame.postId)
-    || typeof frame.senderId !== "string" || !/^[pu][A-Za-z0-9]{10,64}$/.test(frame.senderId)
-    || typeof frame.senderName !== "string"
+    || (frame.messageId !== undefined && (typeof frame.messageId !== "string" || !/^\d{1,24}$/.test(frame.messageId)))
+    || (frame.postId === undefined ? frame.error !== "NOTE_FETCH_FAILED"
+      : typeof frame.postId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(frame.postId))
+    || (frame.senderId !== undefined && (typeof frame.senderId !== "string" || !/^[A-Za-z0-9_-]{1,66}$/.test(frame.senderId)))
+    || (frame.senderName !== undefined && typeof frame.senderName !== "string")
     || (frame.error === undefined ? typeof frame.text !== "string" : frame.error !== "NOTE_FETCH_FAILED")) return undefined;
   return {
-    chatId: frame.chatId, messageId: frame.messageId, postId: frame.postId,
-    senderId: frame.senderId, senderName: frame.senderName,
+    chatId: frame.chatId, messageId: frame.messageId as string | undefined, postId: frame.postId as string | undefined,
+    senderId: frame.senderId as string | undefined, senderName: frame.senderName as string | undefined,
     ...(frame.error === "NOTE_FETCH_FAILED" ? { error: frame.error } : { text: frame.text as string }),
   };
 }

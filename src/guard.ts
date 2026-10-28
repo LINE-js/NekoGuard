@@ -72,7 +72,7 @@ export class ScamGuard extends EventEmitter {
   private userId?: string;
   private generation = 0;
   private ownMembers = new Map<string, string>();
-  private channels = new Set<string>();
+  private channels = new Map<string, "square" | "group">();
   private recent = new Map<string, Work>();
   private queue = new Map<string, Work>();
   private running = new Set<Promise<void>>();
@@ -124,15 +124,15 @@ export class ScamGuard extends EventEmitter {
     }
     if (frame.type === "channels" && Array.isArray(frame.channels)) {
       const previous = this.channels;
-      this.channels = new Set<string>();
+      this.channels = new Map<string, "square" | "group">();
       for (const channel of frame.channels as unknown[]) {
-        if (record(channel) && channel.kind === "square" && typeof channel.channelId === "string") {
-          this.channels.add(channel.channelId);
+        if (record(channel) && (channel.kind === "square" || channel.kind === "group") && typeof channel.channelId === "string") {
+          this.channels.set(channel.channelId, channel.kind);
         }
       }
       let removed = false;
-      for (const chatId of previous) {
-        if (!this.channels.has(chatId)) {
+      for (const [chatId, kind] of previous) {
+        if (this.channels.get(chatId) !== kind) {
           this.ownMembers.delete(chatId);
           removed = true;
         }
@@ -141,7 +141,7 @@ export class ScamGuard extends EventEmitter {
         // Deleting the version makes removal permanent, even if the chat is re-added
         // before an outstanding API response arrives. Keep tracking that request.
         for (const [key, work] of this.recent) {
-          if (!this.channels.has(work.message.channelId)) this.invalidate(key);
+          if (this.channels.get(work.message.channelId) !== previous.get(work.message.channelId)) this.invalidate(key);
         }
       }
       return;
@@ -167,7 +167,7 @@ export class ScamGuard extends EventEmitter {
     }
     if (frame.type === "member:join" || frame.type === "chat:member-joined") {
       const member = parseJoin(frame);
-      if (!member || !this.ready || !this.joinsSupported || !this.channels.has(member.chatId)
+      if (!member || !this.ready || !this.joinsSupported || this.channels.get(member.chatId) !== "square"
         || member.userId === this.ownMembers.get(member.chatId)) return;
       const key = `join:${member.chatId}:${member.userId}`;
       // A rejoin supersedes any check still pending for the earlier join.
@@ -186,22 +186,22 @@ export class ScamGuard extends EventEmitter {
     if (frame.type === "chat:note-posted") {
       const note = parseNote(frame);
       if (!note || !this.ready || !this.options.scam || !this.options.review || !this.channels.has(note.chatId)
-        || note.senderId === this.userId || note.senderId === this.ownMembers.get(note.chatId)) return;
-      const key = `note:${note.chatId}:${note.postId}`;
-      if (this.recent.has(key)) return;
+        || (note.senderId !== undefined && (note.senderId === this.userId || note.senderId === this.ownMembers.get(note.chatId)))) return;
       if (note.error) {
         this.emit("notice", note.error);
         return;
       }
-      if (!note.text?.trim()) return;
+      if (!note.postId || !note.text?.trim()) return;
+      const key = `note:${note.chatId}:${note.postId}`;
+      if (this.recent.has(key)) return;
       if (this.queue.size >= MAX_QUEUE) {
         this.emit("notice", "ANALYSIS_QUEUE_FULL");
         return;
       }
       this.track({
         key, signature: "note", generation: this.generation, text: note.text,
-        message: { messageId: note.messageId, channelId: note.chatId, senderId: note.senderId },
-        noteAlert: buildNoteAlert(note.senderName),
+        message: { messageId: note.messageId ?? "", channelId: note.chatId, senderId: note.senderId ?? "" },
+        noteAlert: buildNoteAlert(note.senderName ?? ""),
       });
       return;
     }
@@ -213,7 +213,7 @@ export class ScamGuard extends EventEmitter {
       this.invalidate(key);
       return;
     }
-    if (message.channelKind !== "square" || !this.channels.has(message.channelId)
+    if (message.channelKind !== "square" || this.channels.get(message.channelId) !== "square"
       || message.senderId === this.userId || message.senderId === this.ownMembers.get(message.channelId)) return;
     const signature = hash("sha256", message.text, "hex");
     const previous = this.recent.get(key);
@@ -294,7 +294,7 @@ export class ScamGuard extends EventEmitter {
       if (!this.ready || this.running.size >= MAX_IN_FLIGHT) break;
       const chatId = work.message.channelId;
       // Only the discovery leader occupies a worker; its followers stay bounded by MAX_QUEUE.
-      if (!this.ownMembers.has(chatId)) {
+      if (this.channels.get(chatId) === "square" && !this.ownMembers.has(chatId)) {
         if (this.discovering.has(chatId)) continue;
       }
       this.queue.delete(work.key);
@@ -361,7 +361,8 @@ export class ScamGuard extends EventEmitter {
     work.noteAlert = undefined;
     if (!this.current(work)) return;
     const message = work.message;
-    if (!this.ownMembers.has(message.channelId)) {
+    const square = this.channels.get(message.channelId) === "square";
+    if (square && !this.ownMembers.has(message.channelId)) {
       this.discovering.add(message.channelId);
       try {
         await this.withAdmins(message.channelId, async () => {
@@ -373,7 +374,7 @@ export class ScamGuard extends EventEmitter {
         queueMicrotask(() => this.start());
       }
     }
-    if (!this.current(work) || !this.ownMembers.has(message.channelId)) return;
+    if (!this.current(work) || (square && !this.ownMembers.has(message.channelId))) return;
     // OpenChat's p… identity differs from the account's u… identity, including phone-originated sends.
     if (message.senderId === this.userId || message.senderId === this.ownMembers.get(message.channelId)) return;
     if (work.join) return this.inspectJoin(work, work.join);

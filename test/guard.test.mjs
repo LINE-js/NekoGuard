@@ -1011,3 +1011,79 @@ test('note warnings are cancelled by take-back, logout, or chat removal while in
     assert.deepEqual(h.sends, []);
   }
 });
+
+test('group notes use account identity without OpenChat admin lookup, while ordinary messages and join checks stay OpenChat-only', async () => {
+  const groupId = 'c' + 'e'.repeat(32);
+  const texts = [];
+  const h = harness({
+    scam: async text => { texts.push(text); return { probability: 0.99 }; },
+    review: async () => true,
+  });
+  h.guard.handle({ type: 'channels', channels: [{ channelId: groupId, kind: 'group' }] });
+  h.guard.handle(note({ chatId: groupId, senderId: userId }));
+  h.guard.handle({ type: 'message', message: message(11, { channelId: groupId, channelKind: 'group' }) });
+  h.guard.handle({ type: 'member:join', chatId: groupId, member: { userId: senderId, displayName: 'admin' } });
+  h.guard.handle(note({ chatId: groupId, senderId: 'u' + 'f'.repeat(32) }));
+  await h.guard.whenIdle();
+  assert.deepEqual(texts, [note().text]);
+  assert.deepEqual(h.calls.map(call => call.type), ['message:send']);
+  assert.deepEqual(h.sends[0], { chatId: groupId, text: '「小語 Alice」在記事本的文章屬於詐騙。', mentions: [] });
+});
+
+test('OpenChat note status events accept no messageId and optional or opaque writer identity; deduplicate across both event sources', async () => {
+  for (const author of [
+    { senderId, senderName: '作者' },
+    { senderId: 'writer_opaque-id', senderName: '作者' },
+    { senderId: undefined, senderName: undefined },
+  ]) {
+    const texts = [];
+    const h = harness({
+      scam: async text => { texts.push(text); return { probability: 1 }; },
+      review: async () => true,
+    });
+    h.guard.handle(note({ messageId: undefined, ...author }));
+    h.guard.handle(note());
+    await h.guard.whenIdle();
+    assert.deepEqual(texts, [note().text]);
+    assert.equal(h.sends.length, 1);
+    assert.deepEqual(h.sends[0].mentions, []);
+    assert.equal(h.sends[0].replyTo, undefined);
+    assert.ok(h.sends[0].text.includes(author.senderName ? '「作者」' : '「（未提供名稱）」'));
+    assert.equal(h.sends[0].text.includes(note().text), false);
+  }
+});
+
+test('note list failures without post or writer ids are reported but never analyse a preview', async () => {
+  let checks = 0;
+  const h = harness({
+    scam: async () => { checks++; return { probability: 1 }; },
+    review: async () => true,
+  });
+  h.guard.handle(note({
+    postId: undefined, messageId: undefined, senderId: undefined, senderName: undefined,
+    text: undefined, error: 'NOTE_FETCH_FAILED',
+  }));
+  h.guard.handle(note({ postId: undefined }));
+  await h.guard.whenIdle();
+  assert.equal(checks, 0);
+  assert.ok(h.notices.includes('NOTE_FETCH_FAILED'));
+  assert.deepEqual(h.sends, []);
+});
+
+test('group and message-less OpenChat note reviews are invalidated when their chat is removed', async () => {
+  for (const kind of ['group', 'square']) {
+    const gate = Promise.withResolvers();
+    const started = Promise.withResolvers();
+    const h = harness({
+      scam: async () => ({ probability: 1 }),
+      review: () => { started.resolve(); return gate.promise; },
+    });
+    h.guard.handle({ type: 'channels', channels: [{ channelId: chatId, kind }] });
+    h.guard.handle(note({ messageId: undefined }));
+    await started.promise;
+    h.guard.handle({ type: 'channels', channels: [] });
+    gate.resolve(true);
+    await h.guard.whenIdle();
+    assert.deepEqual(h.sends, []);
+  }
+});
