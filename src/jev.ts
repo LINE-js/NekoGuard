@@ -36,9 +36,12 @@ export class CrownChecker {
     this.timeoutMs = options.timeoutMs ?? 15_000;
   }
 
-  /** `pictureHash` is the obs hash LINE.js reported; null when LINE no longer has the picture. */
-  async check(pictureHash: string): Promise<number | null> {
-    const picture = await this.fetchPicture(pictureHash);
+  /** Validated CDN path reported by LINE.js; null when LINE no longer has the picture. */
+  async check(picturePath: string): Promise<number | null> {
+    if (!/^(?:[A-Za-z0-9_-]{1,512}\/preview|r\/g2\/member\/p[A-Za-z0-9]{10,64})$/.test(picturePath)) {
+      throw new Error("CROWN_PICTURE_INVALID");
+    }
+    const picture = await this.fetchPicture(picturePath);
     if (!picture) return null;
     const reference = randomUUID();
     const response = await this.fetchImpl(ENDPOINT, {
@@ -76,9 +79,9 @@ export class CrownChecker {
     return probability;
   }
 
-  private async fetchPicture(hash: string): Promise<{ format: "png" | "jpg"; bytes: Buffer } | undefined> {
-    // The small preview is enough to see a crown and keeps the paid image small.
-    const response = await this.fetchImpl(`https://obs.line-scdn.net/${hash}/preview`, {
+  private async fetchPicture(path: string): Promise<{ format: "png" | "jpg"; bytes: Buffer } | undefined> {
+    // Hashes use small previews; member-addressed pictures also work when LINE omits the hash.
+    const response = await this.fetchImpl(`https://obs.line-scdn.net/${path}`, {
       signal: AbortSignal.timeout(this.timeoutMs), redirect: "error",
     });
     if (!response.ok) {

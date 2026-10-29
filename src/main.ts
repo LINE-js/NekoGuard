@@ -43,7 +43,7 @@ async function main(): Promise<void> {
     const guard = new ScamGuard(client, {
       thresholdPercent: config.detection.thresholdPercent,
       crownThresholdPercent: config.detection.crownThresholdPercent,
-      ...(crownChecker ? { crown: (hash: string) => crownChecker.check(hash) } : {}),
+      ...(crownChecker ? { crown: (path: string) => crownChecker.check(path) } : {}),
       ...(scamChecker ? { scam: (text: string) => scamChecker.check(text) } : {}),
       ...(config.detection.directAlertPercent === undefined ? {} : { directAlertPercent: config.detection.directAlertPercent }),
       ...(reviewer ? { review: (text: string, probability: number) => reviewer.isScam(text, probability) } : {}),

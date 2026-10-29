@@ -14,7 +14,7 @@ test('fetches the OpenChat preview and asks TypeSafe with one referenced image b
     ? new Response(jpeg)
     : new Response(JSON.stringify({ answers: { crown: { type: 'noul', noul: 0.82 } } })));
   const checker = new CrownChecker({ token: 'ts_secret', model: 'jev-1.13.0', fetchImpl });
-  assert.equal(await checker.check('0hABC_def-1'), 0.82);
+  assert.equal(await checker.check('0hABC_def-1/preview'), 0.82);
   assert.equal(calls[0].url, 'https://obs.line-scdn.net/0hABC_def-1/preview');
   assert.equal(calls[0].init.redirect, 'error');
   const { init } = calls[1];
@@ -30,15 +30,24 @@ test('fetches the OpenChat preview and asks TypeSafe with one referenced image b
 
 test('a missing picture is null without a paid call; unreadable formats and answers fail with codes only', async () => {
   const gone = fakeFetch(() => new Response('', { status: 404 }));
-  assert.equal(await new CrownChecker({ token: 't', model: 'm', fetchImpl: gone.fetchImpl }).check('h'), null);
+  assert.equal(await new CrownChecker({ token: 't', model: 'm', fetchImpl: gone.fetchImpl }).check('h/preview'), null);
   assert.equal(gone.calls.length, 1);
   const gif = fakeFetch(() => new Response(Buffer.from('GIF89a')));
-  await assert.rejects(new CrownChecker({ token: 't', model: 'm', fetchImpl: gif.fetchImpl }).check('h'), /^Error: CROWN_PICTURE_UNSUPPORTED$/);
+  await assert.rejects(new CrownChecker({ token: 't', model: 'm', fetchImpl: gif.fetchImpl }).check('h/preview'), /^Error: CROWN_PICTURE_UNSUPPORTED$/);
   assert.equal(gif.calls.length, 1, 'nothing is sent to TypeSafe');
   for (const answer of [{ status: 401, body: 'invalid key ts_secret' }, { status: 200, body: '{"answers":{"crown":{"noul":1.5}}}' }, { status: 200, body: 'not json' }]) {
     const bad = fakeFetch((url) => url.includes('obs.') ? new Response(jpeg) : new Response(answer.body, { status: answer.status }));
-    await assert.rejects(new CrownChecker({ token: 'ts_secret', model: 'm', fetchImpl: bad.fetchImpl }).check('h'), (error) => error.message === 'CROWN_CHECK_FAILED');
+    await assert.rejects(new CrownChecker({ token: 'ts_secret', model: 'm', fetchImpl: bad.fetchImpl }).check('h/preview'), (error) => error.message === 'CROWN_CHECK_FAILED');
   }
+});
+
+test('crown picture paths cannot escape the fixed CDN or contain credentials, queries or traversal', async () => {
+  const fake = fakeFetch(() => { throw new Error('Unexpected fetch'); });
+  const checker = new CrownChecker({ token: 't', model: 'm', fetchImpl: fake.fetchImpl });
+  for (const path of ['https://evil.test/photo', '//evil.test/photo', '../private', 'h/preview?secret=x', 'r/g2/member/../private', 'r/g2/member/u' + 'a'.repeat(32)]) {
+    await assert.rejects(checker.check(path), /^Error: CROWN_PICTURE_INVALID$/);
+  }
+  assert.deepEqual(fake.calls, []);
 });
 
 test('scam check sends only the text to TypeSafe and reads probability and a known tactic', async () => {

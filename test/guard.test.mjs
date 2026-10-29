@@ -769,13 +769,13 @@ test('newer LINE.js chat:member-joined frames are checked: the reported name ale
     if (type === 'message:send') { sends.push(fields); return { type: 'sent', messageId: '1' }; }
     throw new Error(`unexpected ${type}`);
   } };
-  const guard = new Guard(api, { thresholdPercent: 70, crownThresholdPercent: 70, checkIntervalMs: 0, sendIntervalMs: 0, adminIntervalMs: 0, crown: async (pictureHash) => { judged.push(pictureHash); return 0.9; } });
+  const guard = new Guard(api, { thresholdPercent: 70, crownThresholdPercent: 70, checkIntervalMs: 0, sendIntervalMs: 0, adminIntervalMs: 0, crown: async (picturePath) => { judged.push(picturePath); return 0.9; } });
   guard.handle({ type: 'hello', protocol: 2, capabilities: ['chat:admins', 'chat:admin-token', 'chat:member-joined'] });
   guard.handle({ type: 'auth:ready', profile: { userId } });
   guard.handle({ type: 'channels', channels: [{ channelId: chatId, kind: 'square' }] });
   guard.handle(upstream({ displayName: '\uFFFC管管-星語', pictureId: `avatar-o-${hash}` }));
   await guard.whenIdle();
-  assert.deepEqual(judged, [hash]);
+  assert.deepEqual(judged, [`${hash}/preview`]);
   assert.equal(sends.length, 1);
   assert.ok(sends[0].text.includes('假皇冠機率：90%\n') && sends[0].text.includes('名稱含管理員相關字詞：是'));
 
@@ -809,6 +809,38 @@ test('a joiner without a picture is not sent for judging and is reported as havi
   assert.ok(sends[0].text.includes('假皇冠機率：0%\n'));
 });
 
+
+test('a URL-only member avatar is downloaded and judged instead of reported as no picture', async () => {
+  const { CrownChecker } = await import('../dist/jev.js');
+  const pictureUrl = `https://obs.line-scdn.net/r/g2/member/${joinerId}`;
+  const calls = [];
+  const picture = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]);
+  const checker = new CrownChecker({ token: 'fixture', model: 'm', fetchImpl: async (url, init) => {
+    calls.push({ url, init });
+    if (url === pictureUrl) return new Response(picture);
+    assert.equal(url, 'https://api.typesafe.ai/v1/systemone');
+    const body = JSON.parse(init.body);
+    assert.equal(body.assets[body.state.avatar].data_base64, picture.toString('base64'));
+    return Response.json({ answers: { crown: { noul: 0.93 } } });
+  } });
+  const sends = [], verdicts = [];
+  const guard = new ScamGuard({ async request(type, fields) {
+    if (type === 'chat:admins:get') return { type: 'chat:admins', chatId, ownMemberId: ownId, admins: [admin] };
+    assert.equal(type, 'message:send');
+    sends.push(fields);
+    return { type: 'sent', messageId: '100' };
+  } }, { thresholdPercent: 70, crownThresholdPercent: 70, checkIntervalMs: 0, adminIntervalMs: 0, sendIntervalMs: 0, crown: path => checker.check(path) });
+  guard.on('join', event => verdicts.push(event));
+  guard.handle({ type: 'hello', protocol: 2, capabilities: ['chat:admins', 'chat:member-joined'] });
+  guard.handle({ type: 'auth:ready', profile: { userId } });
+  guard.handle({ type: 'channels', channels: [{ channelId: chatId, kind: 'square' }] });
+  guard.handle({ type: 'chat:member-joined', chatId, member: { userId: joinerId, displayName: '小明', pictureUrl } });
+  await guard.whenIdle();
+  assert.equal(calls[0].url, pictureUrl);
+  assert.equal(calls[0].init.redirect, 'error');
+  assert.deepEqual(verdicts, [{ chatId, memberId: joinerId, crown: 0.93, crownHit: true, nameHit: false, alert: true }]);
+  assert.deepEqual(sends.flatMap(send => send.mentions.map(mention => mention.userId)), [admin.userId]);
+});
 test('every judged join reports its verdict, including ones that raise no alert', async () => {
   const h = harness({ crown: 0.1 });
   const verdicts = [];

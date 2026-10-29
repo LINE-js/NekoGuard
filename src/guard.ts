@@ -44,8 +44,8 @@ interface GuardOptions {
   crownThresholdPercent: number;
   /** At or above this Jev percentage the admins are mentioned at once, skipping the intent review. */
   directAlertPercent?: number;
-  /** Judges a picture by its OpenChat CDN hash when the backend cannot; null means no picture. */
-  crown?: (pictureHash: string) => Promise<number | null>;
+  /** Judges a picture by a validated OpenChat CDN path when the backend cannot; null means no picture. */
+  crown?: (picturePath: string) => Promise<number | null>;
   /** Judges message text locally; without it the backend's `scam:check` is used. */
   scam?: (text: string) => Promise<ScamAnalysis>;
   /** Optional second opinion on a flagged message's intent; false drops the alert. */
@@ -471,12 +471,12 @@ export class ScamGuard extends EventEmitter {
         // An unjudged picture must not suppress a name finding.
         this.emit("notice", error instanceof ApiError ? error.code : "AVATAR_CHECK_FAILED");
       }
-    } else if (member.pictureHash === undefined) {
+    } else if (member.picturePath === undefined) {
       crown = null;
     } else if (this.options.crown) {
       if (!await this.reserveCheck(work)) return;
       try {
-        crown = await this.options.crown(member.pictureHash);
+        crown = await this.options.crown(member.picturePath);
         if (!this.current(work)) return;
       } catch (error) {
         if (!this.current(work)) return;
