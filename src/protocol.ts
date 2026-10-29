@@ -128,6 +128,10 @@ export function parseJoin(frame: Frame): JoinedMember | undefined {
       if (hash) picturePath = `${hash[1]}/preview`;
     }
   }
+  // Join notifications may omit both fields even though OBS has the member's photo.
+  if (!picturePath && !member.pictureId && !member.pictureUrl) {
+    picturePath = `r/g2/member/${member.userId}`;
+  }
   return { chatId: frame.chatId, userId: member.userId, displayName: member.displayName, ...(picturePath ? { picturePath } : {}) };
 }
 

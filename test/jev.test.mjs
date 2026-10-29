@@ -28,10 +28,12 @@ test('fetches the OpenChat preview and asks TypeSafe with one referenced image b
   assert.deepEqual(body.assets[reference], { type: 'image', format: 'jpg', data_base64: jpeg.toString('base64') });
 });
 
-test('a missing picture is null without a paid call; unreadable formats and answers fail with codes only', async () => {
-  const gone = fakeFetch(() => new Response('', { status: 404 }));
-  assert.equal(await new CrownChecker({ token: 't', model: 'm', fetchImpl: gone.fetchImpl }).check('h/preview'), null);
-  assert.equal(gone.calls.length, 1);
+test('unavailable pictures and unreadable formats fail with codes without a paid call', async () => {
+  for (const [status, code] of [[404, 'CROWN_PICTURE_NOT_FOUND'], [403, 'CROWN_PICTURE_FORBIDDEN']]) {
+    const gone = fakeFetch(() => new Response('', { status }));
+    await assert.rejects(new CrownChecker({ token: 't', model: 'm', fetchImpl: gone.fetchImpl }).check('h/preview'), error => error.message === code);
+    assert.equal(gone.calls.length, 1);
+  }
   const gif = fakeFetch(() => new Response(Buffer.from('GIF89a')));
   await assert.rejects(new CrownChecker({ token: 't', model: 'm', fetchImpl: gif.fetchImpl }).check('h/preview'), /^Error: CROWN_PICTURE_UNSUPPORTED$/);
   assert.equal(gif.calls.length, 1, 'nothing is sent to TypeSafe');

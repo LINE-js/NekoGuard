@@ -788,7 +788,7 @@ test('newer LINE.js chat:member-joined frames are checked: the reported name ale
   assert.ok(h.sends[0].text.includes('未能判定'));
 });
 
-test('a joiner without a picture is not sent for judging and is reported as having none', async () => {
+test('missing picture metadata resolves the member photo instead of assuming there is none', async () => {
   const judged = [];
   const { ScamGuard: Guard } = await import('../dist/guard.js');
   const sends = [];
@@ -804,9 +804,9 @@ test('a joiner without a picture is not sent for judging and is reported as havi
   guard.handle({ type: 'chat:member-joined', chatId, member: { userId: joinerId, displayName: '群管' } });
   guard.handle({ type: 'chat:member-joined', chatId, member: { userId: 'p' + 'f'.repeat(32), displayName: '小明', pictureId: 'avatar-o-../../etc' } });
   await guard.whenIdle();
-  assert.deepEqual(judged, [], 'a malformed picture id is never fetched');
+  assert.deepEqual(judged, [`r/g2/member/${joinerId}`], 'missing metadata uses the member route; malformed metadata is not fetched');
   assert.equal(sends.length, 1);
-  assert.ok(sends[0].text.includes('假皇冠機率：0%\n'));
+  assert.ok(sends[0].text.includes('假皇冠機率：100%\n'));
 });
 
 
@@ -840,6 +840,27 @@ test('a URL-only member avatar is downloaded and judged instead of reported as n
   assert.equal(calls[0].init.redirect, 'error');
   assert.deepEqual(verdicts, [{ chatId, memberId: joinerId, crown: 0.93, crownHit: true, nameHit: false, alert: true }]);
   assert.deepEqual(sends.flatMap(send => send.mentions.map(mention => mention.userId)), [admin.userId]);
+});
+
+test('member image download failures report an unknown crown result rather than zero', async () => {
+  const { CrownChecker } = await import('../dist/jev.js');
+  for (const [status, code] of [[403, 'CROWN_PICTURE_FORBIDDEN'], [404, 'CROWN_PICTURE_NOT_FOUND']]) {
+    const notices = [], verdicts = [];
+    const checker = new CrownChecker({ token: 'fixture', model: 'm', fetchImpl: async () => new Response('', { status }) });
+    const guard = new ScamGuard({ async request(type) {
+      assert.equal(type, 'chat:admins:get');
+      return { type: 'chat:admins', chatId, ownMemberId: ownId, admins: [admin] };
+    } }, { thresholdPercent: 70, crownThresholdPercent: 70, checkIntervalMs: 0, adminIntervalMs: 0, crown: path => checker.check(path) });
+    guard.on('notice', value => notices.push(value));
+    guard.on('join', value => verdicts.push(value));
+    guard.handle({ type: 'hello', protocol: 2, capabilities: ['chat:admins', 'chat:member-joined'] });
+    guard.handle({ type: 'auth:ready', profile: { userId } });
+    guard.handle({ type: 'channels', channels: [{ channelId: chatId, kind: 'square' }] });
+    guard.handle({ type: 'chat:member-joined', chatId, member: { userId: joinerId, displayName: '小明' } });
+    await guard.whenIdle();
+    assert.ok(notices.includes(code));
+    assert.deepEqual(verdicts, [{ chatId, memberId: joinerId, crown: undefined, crownHit: false, nameHit: false, alert: false }]);
+  }
 });
 test('every judged join reports its verdict, including ones that raise no alert', async () => {
   const h = harness({ crown: 0.1 });

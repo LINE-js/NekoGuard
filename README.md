@@ -88,7 +88,7 @@ jev: # 後端為內建 chat:member-joined 的 LINE.js 時必填：詐騙訊息�
 
 設定修改後重新啟動外掛。看見 `MONITORING_READY` 表示 LINE 已登入且後端支援管理員擴充；`SCAM_ALERT_SENT probability=70% admins=20/21` 表示一批通知已由 LINE.js 確認送出（不是管理員已讀）；`JOIN_ALERT_SENT crown=93% name=false admins=1/1` 為新成員提醒（`crown=none` 表示沒有大頭貼、`unknown` 表示未能判定）。每位新成員判讀完成都會記一行 `JOIN_CHECKED chat=… member=… fake_crown=0% name=false alert=false`，未觸發警示也一樣（只記 ID 與結果，不記名稱）。啟動時出現 `LINEJS_MEMBER_JOIN_EXTENSION_REQUIRED` 表示後端沒有任何加入事件：詐騙監測照常，但不檢查新成員；出現 `CROWN_CHECK_DISABLED` 表示後端只通知加入而 NekoGuard 未設定 `jev.token`：仍做名稱檢查，皇冠一律「未能判定」；出現 `SCAM_CHECK_DISABLED` 表示後端是已移除 `scam:check` 的較新 LINE.js 而 NekoGuard 未設定 `jev.token`：不分析訊息（不再對每則訊息等到 `REQUEST_TIMEOUT`）。本機 TypeSafe 詐騙判斷失敗時記 `SCAM_CHECK_FAILED`，不通知。`SIGINT`／`SIGTERM` 可停止程序。
 
-加入事件的 `JOIN_CHECKED` 現在另含 `status` 與 `has_crown`，無論是否發出警示都會記錄。`status=checked` 表示 Jev 已完成分析，`has_crown=true/false` 為機率與皇冠門檻比較結果；`status=no_picture` 表示沒有大頭照，不呼叫圖片分析，顯示 `fake_crown=0% has_crown=false`；`status=unavailable` 表示未能分析（例如未設定金鑰或 API 失敗），顯示 `fake_crown=unknown has_crown=unknown`，失敗另記固定錯誤碼。不記錄暱稱、圖片內容或金鑰。自己的加入事件與已失效工作仍排除。驗證：78 項測試通過；實際啟動 `dist/main.js` 經本機 WebSocket，以受控圖片／模型回應確認無照片、5%、93% 與分析失敗四種情境皆有結果 log，未呼叫真實外部服務。
+加入事件的 `JOIN_CHECKED` 含 `status` 與 `has_crown`，無論是否發出警示都會記錄。`status=checked` 表示 Jev 已完成分析，`has_crown=true/false` 為機率與皇冠門檻比較結果；`status=no_picture` 僅用於舊補丁後端明確回報無圖片。新版後端缺少圖片欄位不代表沒照片，會以成員 ID 查詢 CDN。`status=unavailable` 表示未能分析（例如未設定金鑰、無效來源或下載／模型失敗），顯示 `fake_crown=unknown has_crown=unknown`，失敗另記固定錯誤碼；不將無法下載視為 0%。不記錄暱稱、圖片內容或金鑰。自己的加入事件與已失效工作仍排除。
 
 ## 行為與限制
 
@@ -113,7 +113,7 @@ jev: # 後端為內建 chat:member-joined 的 LINE.js 時必填：詐騙訊息�
 - **資料與費用**：外掛不保存聊天內容或登入 session 到磁碟。自動分析會將別人的文字透過 LINE.js 送至 TypeSafe，依其方案計費；請先告知社群並確認資料處理政策。模型結果只供查證，不是事實判定，不會自動刪訊息、踢人或封鎖。
 - **名單一致性**：每次通知前重新完整分頁查詢目前成員，不使用 senderRole 快取；LINE 沒有跨頁原子快照，查詢／發送期間的人員異動仍可能競態。任何頁面失敗或缺漏都不回部分名單。
 - **新成員冒充檢查**：只處理 LINE.js 送出的 `member:join`（OpenChat `NOTIFIED_JOIN_SQUARE_CHAT`），不含自己的社群身分。先以 `avatar:check` 請 LINE.js 重新取得目前大頭貼小圖並送 Jev（`crown >= crownThresholdPercent / 100`，含等號），再以名稱比對；名稱比對先做 NFKC、轉小寫、移除所有非字母數字（空白、符號、表情、零寬字元）並將「菅／筦→管、里→理、羣→群」視為同字，因此「管 理」「群\u200b管」「ＡＤＭＩＮ」「Ad Min」都會命中，但含 admin 的一般英文字（如 badminton）也可能誤報。大頭貼無法判定（未設 Jev 金鑰、圖片非 PNG／JPEG、逾時等）只記錄代碼，不阻擋名稱判定；沒有大頭貼時只看名稱。皇冠判定與詐騙分析共用同一個每分鐘 10 次的付費額度與 6.1 秒間隔，每位新成員固定一次 Jev 呼叫並依 TypeSafe 計費；同一成員重新加入會取消前一次尚未完成的檢查。通知沿用詐騙通知的管理員重新查詢、分批標記、佇列與限流；不回覆任何訊息，也不自動踢人。大頭貼會送至 TypeSafe 標示為實驗性（Dreamer-ready）的圖片功能。
-- **加入事件來源**：LINE 帳號層事件串流不含他人加入，LINE.js 需讀取 `api.chats` 內各 OpenChat 自己的事件（較新的 LINE.js 內建，日誌為 `LINE 社群成員加入：…`）。後端為內建版本時，NekoGuard 優先依 `pictureId`（`avatar-o-<hash>`）取得 CDN 小圖；沒有有效 hash 時改讀 `pictureUrl`，接受同一 LINE CDN 的 hash 網址，以及與加入者 ID 完全相符的 `https://obs.line-scdn.net/r/g2/member/<成員ID>`。LINE 可能只提供成員圖片網址，缺少 `pictureId` 不再直接當成沒照片。圖片僅從固定 HTTPS CDN 主機抓取，拒絕外站、帳密、query、fragment、路徑跳脫、其他成員 ID 與重新導向；只送 PNG／JPEG 至 TypeSafe，維持 2 MiB 上限、圖片 opt-in 標頭與每次新 UUID。沒有任何有效圖片來源時才略過抓圖；CDN 回 404／403 沿用無圖片結果，下載或模型失敗保留未能判定並記 `CROWN_*`。金鑰只放在 NekoGuard 的 `config.yaml` 或環境變數，不入日誌。
+- **加入事件來源**：LINE.js 推送範圍內的社群加入事件後，NekoGuard 優先依 `pictureId`（`avatar-o-<hash>`）取得 CDN 小圖；沒有有效 hash 時改讀 `pictureUrl`，接受 LINE CDN 的 hash 網址，以及與加入者 ID 完全相符的 `https://obs.line-scdn.net/r/g2/member/<成員ID>`。兩個圖片欄位都缺漏／空白時，仍以已驗證的成員 ID 建立該成員路徑抓圖，不再直接跳過分析。圖片僅從固定 HTTPS CDN 主機抓取，拒絕外站、帳密、query、fragment、路徑跳脫、其他成員 ID 與重新導向；僅接受 PNG／JPEG，維持 2 MiB 上限、TypeSafe 圖片 opt-in 與每次新 UUID。無效圖片來源不抓取，記 `CROWN_PICTURE_INVALID`；CDN 403／404 分別記 `CROWN_PICTURE_FORBIDDEN`／`CROWN_PICTURE_NOT_FOUND` 並保留「未能判定」，不宣告無照片。金鑰不入日誌。
 
 ## 驗證
 
@@ -132,6 +132,7 @@ npm audit --audit-level=high
 - 並行排程 smoke：啟動真實 `dist/main.js` 連接本機受控 WebSocket 服務，維持預設限流；第一則 Jev 結果刻意暫不回覆，第二則仍於下一額度開始並完成 90% 管理員通知，兩次分析實測間隔 6103 ms；自身訊息沒有送入分析。此項不連接真實 LINE／TypeSafe。
 - 新成員冒充 smoke：實際 LINE.js hub／HTTP 伺服器（受控 LINE 與 Jev fixture）連接真實 `dist/main.js`，依序加入四人：皇冠 93%＋一般名稱、皇冠 5%＋「群 管✨Amy」、無大頭貼＋一般名稱、自己的社群身分。前兩人各收到一則 @ 管理員的提醒（不含 `replyTo`、新成員未被標記），後兩人沒有通知；Jev 圖片呼叫恰為兩次（無大頭貼與自己均不呼叫）。未連接真實 LINE／TypeSafe。
 - 成員圖片來源修正驗證：`npm test` 共 81 項通過，包含只有 `pictureUrl` 的加入事件確實下載 JPEG、送 Jev、發出皇冠判斷與管理員提醒，以及 CDN／成員 ID／路徑驗證。實際 `dist/main.js` 經本機 WebSocket 收到無 `pictureId`、僅成員圖片網址的事件後，受控圖片與 Jev 回應產生 `status=checked fake_crown=93% has_crown=true`，不再誤記 `no_picture`。另以真實 CDN GET 確認回報的成員圖片可取得（HTTP 200、JPEG）；未將該照片送至真實 TypeSafe，93% 是 smoke fixture，非其照片的實測結果。
+- 圖片欄位缺漏驗證：全套 82 項測試通過，涵蓋缺漏圖片欄位仍查詢成員路徑，以及 CDN 403／404 保留未知結果、不送付費模型請求。實際 `dist/main.js` 經本機 WebSocket 接收兩個圖片欄位皆缺漏的事件，成功由真實 CDN 下載回報成員的 JPEG，再交給受控模型回應並輸出 `status=checked`。真實圖片 GET 為 HTTP 200、81,002 bytes；模型未連線，smoke 中 5% 為 fixture，不是該照片的真實判讀。
 - 記事兩階段驗證：`npm test` 共 78 項通過，包含門檻、意圖否定／失敗僅留預警、高分仍複判、複判期間先發預警、確認後刷新並分批 @ 21 位現任管理員，以及群組兩階段均不 @ 人。實際 `ApiClient`／`ScamGuard` 經本機 WebSocket 驗證社群與群組各收到兩階段詳細提醒，95% 的預警先送出且無提及；複判確認後社群僅 @ 更新後的管理員，群組不查管理員也不 @ 人。全部提醒保留「暱稱」、機率與手法，不含原文或 `replyTo`。使用加速限流與受控 LINE／模型回應，未連接真實外部服務。
 - Jev 判準調整驗證：`npm test` 共 78 項通過。實際執行 `ScamChecker`，以一般風險短句與假客服誘導付款／安裝軟體的對照文字檢查出站請求，確認兩者使用相同通用判準、原文照送、沒有特定句子白名單且原始機率不被改寫。回應使用受控 fixture；未呼叫真實 TypeSafe，無法據此宣稱「你電腦被駭更貴」的新模型機率已降低。
 - API 傳輸 smoke：使用同一組 120 筆管理員查詢、分析及通知請求，實際連接本機 WebSocket，比較優化前後雙向傳輸量。JSON payload 減少 21.2%；含 WebSocket framing 的資料量減少 20.7%（不含握手、TCP/IP 或 TLS overhead）。此為固定小訊息樣本，不代表所有流量或 Jev 推論延遲均有同等改善。

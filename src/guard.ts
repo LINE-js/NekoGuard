@@ -472,7 +472,7 @@ export class ScamGuard extends EventEmitter {
         this.emit("notice", error instanceof ApiError ? error.code : "AVATAR_CHECK_FAILED");
       }
     } else if (member.picturePath === undefined) {
-      crown = null;
+      this.emit("notice", "CROWN_PICTURE_INVALID");
     } else if (this.options.crown) {
       if (!await this.reserveCheck(work)) return;
       try {

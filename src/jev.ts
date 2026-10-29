@@ -36,13 +36,12 @@ export class CrownChecker {
     this.timeoutMs = options.timeoutMs ?? 15_000;
   }
 
-  /** Validated CDN path reported by LINE.js; null when LINE no longer has the picture. */
-  async check(picturePath: string): Promise<number | null> {
+  /** Validated CDN path reported by LINE.js; unavailable images fail with a fixed code. */
+  async check(picturePath: string): Promise<number> {
     if (!/^(?:[A-Za-z0-9_-]{1,512}\/preview|r\/g2\/member\/p[A-Za-z0-9]{10,64})$/.test(picturePath)) {
       throw new Error("CROWN_PICTURE_INVALID");
     }
     const picture = await this.fetchPicture(picturePath);
-    if (!picture) return null;
     const reference = randomUUID();
     const response = await this.fetchImpl(ENDPOINT, {
       method: "POST",
@@ -79,14 +78,15 @@ export class CrownChecker {
     return probability;
   }
 
-  private async fetchPicture(path: string): Promise<{ format: "png" | "jpg"; bytes: Buffer } | undefined> {
+  private async fetchPicture(path: string): Promise<{ format: "png" | "jpg"; bytes: Buffer }> {
     // Hashes use small previews; member-addressed pictures also work when LINE omits the hash.
     const response = await this.fetchImpl(`https://obs.line-scdn.net/${path}`, {
       signal: AbortSignal.timeout(this.timeoutMs), redirect: "error",
     });
     if (!response.ok) {
       await response.body?.cancel().catch(() => {});
-      if (response.status === 404 || response.status === 403) return undefined;
+      if (response.status === 404) throw new Error("CROWN_PICTURE_NOT_FOUND");
+      if (response.status === 403) throw new Error("CROWN_PICTURE_FORBIDDEN");
       throw new Error("CROWN_PICTURE_FAILED");
     }
     const bytes = await readLimited(response, MAX_PICTURE_BYTES);
