@@ -88,6 +88,8 @@ jev: # 後端為內建 chat:member-joined 的 LINE.js 時必填：詐騙訊息�
 
 設定修改後重新啟動外掛。看見 `MONITORING_READY` 表示 LINE 已登入且後端支援管理員擴充；`SCAM_ALERT_SENT probability=70% admins=20/21` 表示一批通知已由 LINE.js 確認送出（不是管理員已讀）；`JOIN_ALERT_SENT crown=93% name=false admins=1/1` 為新成員提醒（`crown=none` 表示沒有大頭貼、`unknown` 表示未能判定）。每位新成員判讀完成都會記一行 `JOIN_CHECKED chat=… member=… fake_crown=0% name=false alert=false`，未觸發警示也一樣（只記 ID 與結果，不記名稱）。啟動時出現 `LINEJS_MEMBER_JOIN_EXTENSION_REQUIRED` 表示後端沒有任何加入事件：詐騙監測照常，但不檢查新成員；出現 `CROWN_CHECK_DISABLED` 表示後端只通知加入而 NekoGuard 未設定 `jev.token`：仍做名稱檢查，皇冠一律「未能判定」；出現 `SCAM_CHECK_DISABLED` 表示後端是已移除 `scam:check` 的較新 LINE.js 而 NekoGuard 未設定 `jev.token`：不分析訊息（不再對每則訊息等到 `REQUEST_TIMEOUT`）。本機 TypeSafe 詐騙判斷失敗時記 `SCAM_CHECK_FAILED`，不通知。`SIGINT`／`SIGTERM` 可停止程序。
 
+加入事件的 `JOIN_CHECKED` 現在另含 `status` 與 `has_crown`，無論是否發出警示都會記錄。`status=checked` 表示 Jev 已完成分析，`has_crown=true/false` 為機率與皇冠門檻比較結果；`status=no_picture` 表示沒有大頭照，不呼叫圖片分析，顯示 `fake_crown=0% has_crown=false`；`status=unavailable` 表示未能分析（例如未設定金鑰或 API 失敗），顯示 `fake_crown=unknown has_crown=unknown`，失敗另記固定錯誤碼。不記錄暱稱、圖片內容或金鑰。自己的加入事件與已失效工作仍排除。驗證：78 項測試通過；實際啟動 `dist/main.js` 經本機 WebSocket，以受控圖片／模型回應確認無照片、5%、93% 與分析失敗四種情境皆有結果 log，未呼叫真實外部服務。
+
 ## 行為與限制
 
 - **範圍**：監測 `api.chats` 內 OpenChat（`square`）的即時文字、文字編輯，以及一般群組（`group`）與 OpenChat 的新記事全文。一般群組僅分析記事，不啟用一般聊天文字或新成員冒充檢查；多人聊天室、私聊不監測。不拿全體成員或曾發言的管理員冒充完整名單。
