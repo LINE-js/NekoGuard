@@ -39,6 +39,8 @@ async function main(): Promise<void> {
   }
   let stopped = false;
   let retryTimer: NodeJS.Timeout | undefined;
+  // A brief LINE.js restart should not leave 10 seconds unmonitored; a backend that keeps failing still gets 10-second retries.
+  let retryDelayMs = 1000;
   let closeSession = () => {};
   const shutdown = (exitCode: number) => {
     if (stopped) return;
@@ -62,6 +64,7 @@ async function main(): Promise<void> {
       ...(reviewer ? { review: (text: string, probability: number) => reviewer.isScam(text, probability) } : {}),
     });
     let closed = false;
+    let helloAt: number | undefined;
     const helloDeadline = setTimeout(() => retry("LINEJS_HELLO_TIMEOUT"), 25_000);
     closeSession = () => {
       if (closed) return;
@@ -73,12 +76,19 @@ async function main(): Promise<void> {
     const retry = (code: string) => {
       if (closed || stopped) return;
       closeSession();
-      console.error(`${code}：10 秒後重新連線。`);
-      retryTimer = setTimeout(() => { void connect(); }, 10_000);
+      // Only a session that stayed up a minute counts as recovered; a flapping backend keeps backing off.
+      if (helloAt !== undefined && performance.now() - helloAt >= 60_000) retryDelayMs = 1000;
+      const delayMs = retryDelayMs;
+      retryDelayMs = Math.min(retryDelayMs * 2, 10_000);
+      console.error(`${code}：${delayMs / 1000} 秒後重新連線。`);
+      retryTimer = setTimeout(() => { void connect(); }, delayMs);
     };
     client.on("frame", frame => {
       if (closed || stopped) return;
-      if (frame.type === "hello") clearTimeout(helloDeadline);
+      if (frame.type === "hello") {
+        clearTimeout(helloDeadline);
+        helloAt = performance.now();
+      }
       guard.handle(frame);
     });
     client.on("fault", retry);
