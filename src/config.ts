@@ -7,8 +7,14 @@ export interface Config {
   detection: { thresholdPercent: number; crownThresholdPercent: number; directAlertPercent?: number };
   /** Present only when a TypeSafe key is configured: crown checks for backends that cannot judge pictures. */
   jev?: { token: string; model: string };
-  /** Present only when an Anthropic key is configured: second opinion on flagged messages. */
-  review?: { apiKey: string; model: string };
+  /** Intent reviewers in call order: the configured primary first, then the backup. Absent without any key. */
+  review?: ReviewerConfig[];
+}
+
+export interface ReviewerConfig {
+  provider: 'openai' | 'anthropic';
+  apiKey: string;
+  model: string;
 }
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -80,18 +86,43 @@ export async function loadConfig(path = 'config.yaml'): Promise<Config> {
   if (typeof model !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(model)) throw new Error('jev.model must be a model name.');
   const review = value.review === undefined || value.review === null ? {} : value.review;
   if (!object(review)) throw new Error('review must be a mapping when present.');
-  const reviewKey = process.env.NEKOGUARD_REVIEW_API_KEY ?? review.apiKey ?? '';
-  if (typeof reviewKey !== 'string' || (reviewKey !== '' && !/^[\x21-\x7e]+$/.test(reviewKey))) {
-    throw new Error('review.apiKey must be printable ASCII without spaces.');
+  // Former single-provider names would otherwise be ignored silently and switch the review off.
+  if (review.apiKey !== undefined || review.model !== undefined) {
+    throw new Error('review.apiKey and review.model moved to review.anthropic or review.openai; see config.example.yaml.');
   }
-  const reviewModel = review.model ?? 'claude-haiku-5-5';
-  if (typeof reviewModel !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(reviewModel)) throw new Error('review.model must be a model name.');
+  if (process.env.NEKOGUARD_REVIEW_API_KEY !== undefined) {
+    throw new Error('NEKOGUARD_REVIEW_API_KEY was replaced by NEKOGUARD_ANTHROPIC_API_KEY and NEKOGUARD_OPENAI_API_KEY.');
+  }
+  const primary = review.provider ?? 'openai';
+  if (primary !== 'openai' && primary !== 'anthropic') throw new Error('review.provider must be openai or anthropic.');
+  const openai = reviewer(review, 'openai', 'NEKOGUARD_OPENAI_API_KEY', 'gpt-6-luna');
+  const anthropic = reviewer(review, 'anthropic', 'NEKOGUARD_ANTHROPIC_API_KEY', 'claude-haiku-5-5');
+  // With no key at all the review is simply off (the shipped example); a backup-only setup is a mistake.
+  if (review.provider !== undefined && (openai || anthropic) && !(primary === 'openai' ? openai : anthropic)) {
+    throw new Error(`review.provider is ${primary} but no ${primary} API key is configured.`);
+  }
+  const reviewers = (primary === 'openai' ? [openai, anthropic] : [anthropic, openai])
+    .filter((entry): entry is ReviewerConfig => entry !== undefined);
   return {
     api: { url, token },
     detection: { thresholdPercent, crownThresholdPercent, ...(directAlertPercent === undefined ? {} : { directAlertPercent }) },
     ...(jevToken ? { jev: { token: jevToken, model } } : {}),
-    ...(reviewKey ? { review: { apiKey: reviewKey, model: reviewModel } } : {}),
+    ...(reviewers.length > 0 ? { review: reviewers } : {}),
   };
+}
+
+/** One provider's key (environment first) and model; undefined when no key is configured. */
+function reviewer(review: Record<string, unknown>, provider: ReviewerConfig['provider'], envName: string, defaultModel: string): ReviewerConfig | undefined {
+  const section = review[provider] === undefined || review[provider] === null ? {} : review[provider];
+  if (!object(section)) throw new Error(`review.${provider} must be a mapping when present.`);
+  const apiKey = process.env[envName] ?? section.apiKey ?? '';
+  // Printable ASCII without spaces: the key goes into an HTTP header as is.
+  if (typeof apiKey !== 'string' || (apiKey !== '' && !/^[\x21-\x7e]+$/.test(apiKey))) {
+    throw new Error(`review.${provider}.apiKey must be printable ASCII without spaces.`);
+  }
+  const model = section.model ?? defaultModel;
+  if (typeof model !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(model)) throw new Error(`review.${provider}.model must be a model name.`);
+  return apiKey ? { provider, apiKey, model } : undefined;
 }
 
 function percent(value: unknown, name: string): number {

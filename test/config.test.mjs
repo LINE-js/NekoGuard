@@ -104,18 +104,39 @@ test('the TypeSafe key is optional, environment-overridable and validated withou
   }
 });
 
-test('the review key is optional, environment-overridable, defaults to claude-haiku-5-5 and is validated', async () => {
-  const previous = process.env.NEKOGUARD_REVIEW_API_KEY;
-  delete process.env.NEKOGUARD_REVIEW_API_KEY;
+test('review providers: OpenAI is primary by default, Claude backs it up, and the order is switchable', async () => {
+  const names = ['NEKOGUARD_OPENAI_API_KEY', 'NEKOGUARD_ANTHROPIC_API_KEY', 'NEKOGUARD_REVIEW_API_KEY'];
+  const previous = Object.fromEntries(names.map(name => [name, process.env[name]]));
+  for (const name of names) delete process.env[name];
+  const both = 'review:\n  openai:\n    apiKey: sk-openai\n  anthropic:\n    apiKey: sk-claude\n';
   try {
     await withConfig(yaml(), async (path) => assert.equal((await loadConfig(path)).review, undefined));
-    await withConfig(`${yaml()}review:\n  apiKey: sk-file\n`, async (path) => assert.deepEqual((await loadConfig(path)).review, { apiKey: 'sk-file', model: 'claude-haiku-5-5' }));
-    process.env.NEKOGUARD_REVIEW_API_KEY = 'sk-env';
-    await withConfig(`${yaml()}review:\n  apiKey: sk-file\n  model: claude-x\n`, async (path) => assert.deepEqual((await loadConfig(path)).review, { apiKey: 'sk-env', model: 'claude-x' }));
-    process.env.NEKOGUARD_REVIEW_API_KEY = 'bad key';
-    await withConfig(yaml(), async (path) => assert.rejects(loadConfig(path), (error) => /review\.apiKey/.test(error.message) && !error.message.includes('bad key')));
+    await withConfig(`${yaml()}${both}`, async (path) => assert.deepEqual((await loadConfig(path)).review, [
+      { provider: 'openai', apiKey: 'sk-openai', model: 'gpt-6-luna' },
+      { provider: 'anthropic', apiKey: 'sk-claude', model: 'claude-haiku-5-5' },
+    ]));
+    await withConfig(`${yaml()}${both}  provider: anthropic\n`, async (path) => assert.deepEqual((await loadConfig(path)).review.map(entry => entry.provider), ['anthropic', 'openai']));
+    // Only one key: that provider alone, with no backup; an explicitly chosen primary must have its key.
+    await withConfig(`${yaml()}review:\n  anthropic:\n    apiKey: sk-claude\n    model: claude-x\n`, async (path) => assert.deepEqual((await loadConfig(path)).review, [{ provider: 'anthropic', apiKey: 'sk-claude', model: 'claude-x' }]));
+    await withConfig(`${yaml()}review:\n  provider: openai\n  anthropic:\n    apiKey: sk-claude\n`, async (path) => assert.rejects(loadConfig(path), /review\.provider is openai/));
+    // The shipped example: a chosen provider with empty keys leaves the review off rather than refusing to start.
+    await withConfig(`${yaml()}review:\n  provider: openai\n  openai:\n    apiKey: ''\n  anthropic:\n    apiKey: ''\n`, async (path) => assert.equal((await loadConfig(path)).review, undefined));
+    await withConfig(`${yaml()}review:\n  provider: gemini\n`, async (path) => assert.rejects(loadConfig(path), /review\.provider must be/));
+    process.env.NEKOGUARD_OPENAI_API_KEY = 'sk-env-openai';
+    process.env.NEKOGUARD_ANTHROPIC_API_KEY = 'sk-env-claude';
+    await withConfig(`${yaml()}${both}`, async (path) => assert.deepEqual((await loadConfig(path)).review.map(entry => entry.apiKey), ['sk-env-openai', 'sk-env-claude']));
+    process.env.NEKOGUARD_OPENAI_API_KEY = 'bad key';
+    await withConfig(yaml(), async (path) => assert.rejects(loadConfig(path), (error) => /review\.openai\.apiKey/.test(error.message) && !error.message.includes('bad key')));
+    delete process.env.NEKOGUARD_OPENAI_API_KEY;
+    delete process.env.NEKOGUARD_ANTHROPIC_API_KEY;
+    // The former single-provider names fail loudly instead of silently switching the review off.
+    await withConfig(`${yaml()}review:\n  apiKey: sk-old\n`, async (path) => assert.rejects(loadConfig(path), (error) => /review\.anthropic/.test(error.message) && !error.message.includes('sk-old')));
+    process.env.NEKOGUARD_REVIEW_API_KEY = 'sk-old-env';
+    await withConfig(yaml(), async (path) => assert.rejects(loadConfig(path), (error) => /NEKOGUARD_ANTHROPIC_API_KEY/.test(error.message) && !error.message.includes('sk-old-env')));
   } finally {
-    if (previous === undefined) delete process.env.NEKOGUARD_REVIEW_API_KEY; else process.env.NEKOGUARD_REVIEW_API_KEY = previous;
+    for (const name of names) {
+      if (previous[name] === undefined) delete process.env[name]; else process.env[name] = previous[name];
+    }
   }
 });
 

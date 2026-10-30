@@ -14,13 +14,19 @@ detection:
 # 後端為較新的 LINE.js（內建 chat:member-joined、已移除 scam:check）時必填：
 # NekoGuard 以此 TypeSafe 金鑰自行判斷訊息詐騙機率與大頭貼皇冠，未設定則不分析訊息。
 # 補丁後端可省略（改用其 scam:check／avatar:check）。NEKOGUARD_JEV_TOKEN 會優先於 jev.token。
-# 記事本判斷一定需要 NekoGuard 的 jev.token 與 review.apiKey，且後端支援 chat:note-posted。
+# 記事本判斷一定需要 NekoGuard 的 jev.token 與至少一把 review 金鑰，且後端支援 chat:note-posted。
 jev:
   token: ''
   model: jev-1.13.0
-# 聊天訊息選填:兩階段判斷。Jev 達門檻先回覆標注(不 @ 任何人),再由 Claude 分析發言意圖,判定為詐騙才 @ 所有管理員。
-# NEKOGUARD_REVIEW_API_KEY 會優先於 review.apiKey;聊天未設金鑰或複判失敗時仍會 @ 管理員。
-# 記事必填：Jev 命中先發詳細預警、不 @ 人；意圖確認後再提醒，社群 @ 管理員、一般群組不 @ 人。不貼原文，複判失敗只保留預警。
+# 意圖分析（選填，記事必填）：Jev 達門檻先回覆標注（不 @ 任何人），再分析發言意圖，判定為詐騙才 @ 所有管理員。
+# provider 為主要供應者（openai 或 anthropic，省略為 openai）；另一個有金鑰時，只在主要失敗時作為備援。
+# 環境變數 NEKOGUARD_OPENAI_API_KEY／NEKOGUARD_ANTHROPIC_API_KEY 優先於檔案內的 apiKey。
+# 聊天：未設金鑰或主要＋備援都失敗時仍會 @ 管理員。記事：不貼原文；都失敗時只保留預警。
 review:
-  apiKey: ''
-  model: claude-haiku-5-5
+  provider: openai
+  openai:
+    apiKey: ''
+    model: gpt-6-luna
+  anthropic:
+    apiKey: ''
+    model: claude-haiku-5-5

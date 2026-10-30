@@ -3,7 +3,7 @@ import { ApiClient } from "./client.js";
 import { loadConfig } from "./config.js";
 import { ScamGuard, type AlertEvent } from "./guard.js";
 import { CrownChecker, ScamChecker } from "./jev.js";
-import { IntentReviewer } from "./review.js";
+import { AnthropicReviewer, OpenAIReviewer, ReviewChain } from "./review.js";
 
 async function main(): Promise<void> {
   const { values } = parseArgs({ options: { config: { type: "string", default: "config.yaml" }, help: { type: "boolean" } } });
@@ -23,7 +23,15 @@ async function main(): Promise<void> {
   const crownChecker = config.jev ? new CrownChecker(config.jev) : undefined;
   // LINE.js no longer offers `scam:check`: with a TypeSafe key NekoGuard analyzes messages itself.
   const scamChecker = config.jev ? new ScamChecker(config.jev) : undefined;
-  const reviewer = config.review ? new IntentReviewer(config.review) : undefined;
+  // Codes and provider names only: never the key, the message or a response body.
+  const reviewer = config.review ? new ReviewChain(
+    config.review.map(entry => entry.provider === "openai" ? new OpenAIReviewer(entry) : new AnthropicReviewer(entry)),
+    (from, to, code) => console.info(`REVIEW_FALLBACK from=${from} to=${to} reason=${code}`),
+  ) : undefined;
+  if (config.review) {
+    const [primary, backup] = config.review;
+    console.info(`REVIEW_PROVIDERS primary=${primary!.provider}:${primary!.model} backup=${backup ? `${backup.provider}:${backup.model}` : "none"}`);
+  }
   let stopped = false;
   let retryTimer: NodeJS.Timeout | undefined;
   let closeSession = () => {};
