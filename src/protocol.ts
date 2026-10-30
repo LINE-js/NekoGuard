@@ -92,6 +92,14 @@ export function parseAdmins(frame: Frame, chatId: string): { admins: Admin[]; ow
   return { admins, ownMemberId: frame.ownMemberId };
 }
 
+/** Own OpenChat member id from `chat:membership`; the role is not needed. */
+export function parseMembership(frame: Frame, chatId: string): string {
+  if (frame.chatId !== chatId || typeof frame.memberId !== "string" || !/^p[A-Za-z0-9]{10,64}$/.test(frame.memberId)) {
+    throw new Error("INVALID_MEMBERSHIP_RESPONSE");
+  }
+  return frame.memberId;
+}
+
 export function parseAnalysis(frame: Frame, message: Pick<Message, "channelId" | "messageId">): ScamAnalysis {
   const analysis = frame.analysis;
   if (frame.chatId !== message.channelId || frame.messageId !== message.messageId

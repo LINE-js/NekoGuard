@@ -5,7 +5,7 @@ import { buildAlerts, buildJoinAlerts, buildMark, buildNoteSubject, buildNoteMar
 import { ApiError } from "./client.js";
 import { isAdminLikeName } from "./names.js";
 import {
-  isMessage, parseAdmins, parseAnalysis, parseAvatar, parseJoin, parseNote, record,
+  isMessage, parseAdmins, parseAnalysis, parseAvatar, parseJoin, parseMembership, parseNote, record,
   type Admin, type Api, type Frame, type JoinedMember, type Message, type ScamAnalysis,
 } from "./protocol.js";
 
@@ -50,10 +50,11 @@ interface GuardOptions {
   scam?: (text: string) => Promise<ScamAnalysis>;
   /** Optional second opinion on a flagged message's intent; false drops the alert. */
   review?: (text: string, probability: number) => Promise<boolean>;
-  /** Test clock seams; production observes LINE.js's shared 10 checks/minute and 20 sends/minute. */
+  /** Test clock seams; production observes the backend's 10 checks/minute (patched LINE.js only), 20 sends/minute and 10 lookups/second. */
   checkIntervalMs?: number;
   sendIntervalMs?: number;
   adminIntervalMs?: number;
+  membershipIntervalMs?: number;
 }
 
 const MAX_QUEUE = 500;
@@ -68,6 +69,8 @@ export class ScamGuard extends EventEmitter {
   private avatarViaBackend = false;
   /** Newer LINE.js (built-in joins) removed `scam:check`; asking it would only time out. */
   private scamViaBackend = false;
+  /** `chat:membership:get` finds the own OpenChat identity without paging every member. */
+  private membershipLookup = false;
   private joinSequence = 0;
   private userId?: string;
   private generation = 0;
@@ -76,18 +79,33 @@ export class ScamGuard extends EventEmitter {
   private recent = new Map<string, Work>();
   private queue = new Map<string, Work>();
   private running = new Set<Promise<void>>();
+  /** Works awaiting an intent review; bounded by MAX_IN_FLIGHT separately from Jev checks. */
+  private reviewing = 0;
+  private reviewWaiters = new Set<() => void>();
   private discovering = new Set<string>();
   private notifications = new Map<string, Notification>();
   private notifying = new Map<string, Promise<void>>();
   private adminTails = new Map<string, Promise<unknown>>();
   private waits = new Map<Work, AbortController>();
   // Elapsed-time quotas must not jump or stall when the wall clock is adjusted.
-  private nextCheck = 0;
-  private nextSend = 0;
-  private nextAdmins = 0;
+  private readonly checkQuotas: readonly Quota[];
+  private readonly adminQuotas: readonly Quota[];
+  private readonly membershipQuotas: readonly Quota[];
+  private readonly sendQuotas: readonly Quota[];
 
   constructor(private readonly api: Api, private readonly options: GuardOptions) {
     super();
+    // Upstream limits are sliding windows, so a burst may go out at once instead of one per interval.
+    // Windows carry a margin for the time a request takes to reach the server.
+    const seam = (intervalMs: number | undefined, ...production: Quota[]) => intervalMs === undefined ? production : [new Quota(1, intervalMs)];
+    // Per connection, `chat:admins:get` and `chat:membership:get` share 10/second.
+    const lookups = new Quota(10, 1100);
+    this.checkQuotas = seam(options.checkIntervalMs, new Quota(10, 61_000));
+    // Each administrator lookup pages through every member on LINE: keep the 10/minute cap on LINE load.
+    this.adminQuotas = seam(options.adminIntervalMs, new Quota(10, 61_000), lookups);
+    this.membershipQuotas = seam(options.membershipIntervalMs, lookups);
+    // LINE.js defaults: 20/minute across bots and 5/second per connection.
+    this.sendQuotas = seam(options.sendIntervalMs, new Quota(20, 61_000), new Quota(5, 1100));
   }
 
   handle(frame: Frame): void {
@@ -100,6 +118,7 @@ export class ScamGuard extends EventEmitter {
       this.avatarViaBackend = this.supported && capabilities.includes("member:join");
       this.joinsSupported = this.avatarViaBackend || (this.supported && capabilities.includes("chat:member-joined"));
       this.scamViaBackend = this.supported && !capabilities.includes("chat:member-joined");
+      this.membershipLookup = this.supported && capabilities.includes("chat:members");
       // Scam monitoring still works against an older extension; only join checks are unavailable.
       if (this.supported && !this.joinsSupported) this.emit("notice", "LINEJS_MEMBER_JOIN_EXTENSION_REQUIRED");
       else if (this.joinsSupported && !this.avatarViaBackend && !this.options.crown) this.emit("notice", "CROWN_CHECK_DISABLED");
@@ -291,7 +310,8 @@ export class ScamGuard extends EventEmitter {
 
   private start(): void {
     for (const work of this.queue.values()) {
-      if (!this.ready || this.running.size >= MAX_IN_FLIGHT) break;
+      // Works in intent review have handed their analysis slot back.
+      if (!this.ready || this.running.size - this.reviewing >= MAX_IN_FLIGHT) break;
       const chatId = work.message.channelId;
       // Only the discovery leader occupies a worker; its followers stay bounded by MAX_QUEUE.
       if (this.channels.get(chatId) === "square" && !this.ownMembers.has(chatId)) {
@@ -365,9 +385,14 @@ export class ScamGuard extends EventEmitter {
     if (square && !this.ownMembers.has(message.channelId)) {
       this.discovering.add(message.channelId);
       try {
-        await this.withAdmins(message.channelId, async () => {
-          if (this.current(work) && !this.ownMembers.has(message.channelId)) await this.fetchAdmins(work);
-        });
+        if (this.membershipLookup) {
+          // Grants are untouched, so this need not wait behind the chat's notification lane.
+          await this.fetchOwnMember(work);
+        } else {
+          await this.withAdmins(message.channelId, async () => {
+            if (this.current(work) && !this.ownMembers.has(message.channelId)) await this.fetchAdmins(work);
+          });
+        }
       } finally {
         this.discovering.delete(message.channelId);
         // Let the leader dispatch first, then admit followers using the resolved identity.
@@ -378,9 +403,9 @@ export class ScamGuard extends EventEmitter {
     // OpenChat's p… identity differs from the account's u… identity, including phone-originated sends.
     if (message.senderId === this.userId || message.senderId === this.ownMembers.get(message.channelId)) return;
     if (work.join) return this.inspectJoin(work, work.join);
-    if (!await this.reserveCheck(work)) return;
     let analysis: ScamAnalysis;
     if (this.options.scam) {
+      // NekoGuard calls TypeSafe itself: only the backend's `scam:check` has the shared 10/minute quota.
       try {
         analysis = await this.options.scam(text ?? "");
       } catch (error) {
@@ -391,10 +416,10 @@ export class ScamGuard extends EventEmitter {
       }
       if (!this.current(work)) return;
     } else {
-      const result = await this.api.request("scam:check", {
+      const result = await this.paced(work, this.checkQuotas, () => this.api.request("scam:check", {
         chatId: message.channelId, messageId: message.messageId,
-      }, "scam:result");
-      if (!this.current(work)) return;
+      }, "scam:result"));
+      if (!result || !this.current(work)) return;
       analysis = parseAnalysis(result, message);
     }
     if (analysis.probability < this.options.thresholdPercent / 100) return;
@@ -407,7 +432,7 @@ export class ScamGuard extends EventEmitter {
       });
       let verdict: boolean;
       try {
-        verdict = await this.options.review!(text!, analysis.probability);
+        verdict = await this.review(work, text!, analysis.probability);
       } catch (error) {
         if (!this.current(work)) return;
         this.emit("notice", error instanceof Error && /^REVIEW_[A-Z_]+$/.test(error.message) ? error.message : "REVIEW_FAILED");
@@ -440,7 +465,7 @@ export class ScamGuard extends EventEmitter {
     // Stage two: only a scam intent in the wording brings the administrators in.
     let verdict: boolean | undefined;
     try {
-      verdict = await this.options.review(text, analysis.probability);
+      verdict = await this.review(work, text, analysis.probability);
     } catch (error) {
       // A failed review must not hide a detector hit: mention the admins and say so.
       if (!this.current(work)) return;
@@ -461,10 +486,10 @@ export class ScamGuard extends EventEmitter {
     // The picture first (Jev), then the name (local); either finding alone alerts the admins.
     let crown: number | null | undefined;
     if (this.avatarViaBackend) {
-      if (!await this.reserveCheck(work)) return;
       try {
-        const result = await this.api.request("avatar:check", { chatId: member.chatId, memberId: member.userId }, "avatar:result");
-        if (!this.current(work)) return;
+        const result = await this.paced(work, this.checkQuotas,
+          () => this.api.request("avatar:check", { chatId: member.chatId, memberId: member.userId }, "avatar:result"));
+        if (!result || !this.current(work)) return;
         crown = parseAvatar(result, member);
       } catch (error) {
         if (!this.current(work)) return;
@@ -474,7 +499,6 @@ export class ScamGuard extends EventEmitter {
     } else if (member.picturePath === undefined) {
       this.emit("notice", "CROWN_PICTURE_INVALID");
     } else if (this.options.crown) {
-      if (!await this.reserveCheck(work)) return;
       try {
         crown = await this.options.crown(member.picturePath);
         if (!this.current(work)) return;
@@ -495,17 +519,57 @@ export class ScamGuard extends EventEmitter {
     });
   }
 
-  /** Waits for the shared paid-check slot; false when the work became stale meanwhile. */
-  private async reserveCheck(work: Work): Promise<boolean> {
-    // Recheck after waking: other workers or a delayed event loop may have
-    // consumed the slot. Reserve only at actual dispatch, never in the future.
-    while (this.nextCheck > performance.now()) {
-      await this.wait(work, this.nextCheck - performance.now());
-      if (!this.current(work)) return false;
+  /**
+   * Runs the intent review in its own pool and hands the analysis slot back, so a burst of flagged
+   * messages waiting on the model does not stop Jev from checking everything else. When the review
+   * pool is full the work keeps its analysis slot, which bounds the total in flight.
+   */
+  private async review(work: Work, text: string, probability: number): Promise<boolean> {
+    while (this.reviewing >= MAX_IN_FLIGHT) {
+      if (!this.current(work)) throw new Error("REVIEW_CANCELLED");
+      const controller = new AbortController();
+      const { promise, resolve } = Promise.withResolvers<void>();
+      controller.signal.addEventListener("abort", () => resolve(), { once: true });
+      const wake = () => controller.abort();
+      this.reviewWaiters.add(wake);
+      // Invalidation aborts this like any other local wait.
+      this.waits.set(work, controller);
+      try {
+        await promise;
+      } finally {
+        this.reviewWaiters.delete(wake);
+        this.waits.delete(work);
+      }
     }
-    if (!this.current(work)) return false;
-    this.nextCheck = performance.now() + (this.options.checkIntervalMs ?? 6100);
-    return true;
+    if (!this.current(work)) throw new Error("REVIEW_CANCELLED");
+    this.reviewing++;
+    this.start();
+    try {
+      return await this.options.review!(text, probability);
+    } finally {
+      this.reviewing--;
+      // Every waiter rechecks; a stale one leaves without taking the slot.
+      for (const wakeWaiter of this.reviewWaiters) wakeWaiter();
+    }
+  }
+
+  /**
+   * Waits until every quota has room, then charges them and dispatches in the same turn, so neither
+   * another worker nor an invalidation can slip in between; undefined when the work became stale.
+   */
+  private async paced(work: Work, quotas: readonly Quota[], dispatch: () => Promise<Frame>): Promise<Frame | undefined> {
+    // Recheck after waking: other workers or a delayed event loop may have
+    // consumed the room. Reserve only at actual dispatch, never in the future.
+    while (this.current(work)) {
+      const now = performance.now();
+      const delay = Math.max(...quotas.map(quota => quota.delay(now)));
+      if (delay <= 0) {
+        for (const quota of quotas) quota.take(now);
+        return dispatch();
+      }
+      await this.wait(work, delay);
+    }
+    return undefined;
   }
 
   private enqueue(notification: Notification): void {
@@ -539,30 +603,42 @@ export class ScamGuard extends EventEmitter {
     const alerts = notification.build(admins);
     let sent = 0;
     for (const alert of alerts) {
-      while (this.nextSend > performance.now()) {
-        await this.wait(work, this.nextSend - performance.now());
-        if (!this.current(work)) return;
-      }
-      if (!this.current(work)) return;
-      this.nextSend = performance.now() + (this.options.sendIntervalMs ?? 3100);
-      await this.api.request("message:send", { chatId: message.channelId, ...alert }, "sent");
-      if (!this.current(work)) return;
+      const sentFrame = await this.paced(work, this.sendQuotas, () => this.api.request("message:send", { chatId: message.channelId, ...alert }, "sent"));
+      if (!sentFrame || !this.current(work)) return;
       sent += alert.mentions.length;
       this.emit("alert", { ...notification.event, mentioned: sent, total: admins.length });
     }
   }
 
   private async fetchAdmins(work: Work) {
-    while (this.nextAdmins > performance.now()) {
-      await this.wait(work, this.nextAdmins - performance.now());
-      if (!this.current(work)) return;
-    }
-    if (!this.current(work)) return;
-    this.nextAdmins = performance.now() + (this.options.adminIntervalMs ?? 6100);
-    const frame = await this.api.request("chat:admins:get", { chatId: work.message.channelId }, "chat:admins");
-    if (!this.current(work)) return;
+    const frame = await this.paced(work, this.adminQuotas, () => this.api.request("chat:admins:get", { chatId: work.message.channelId }, "chat:admins"));
+    if (!frame || !this.current(work)) return;
     const members = parseAdmins(frame, work.message.channelId);
     this.ownMembers.set(work.message.channelId, members.ownMemberId);
     return members;
+  }
+
+  private async fetchOwnMember(work: Work): Promise<void> {
+    const chatId = work.message.channelId;
+    const frame = await this.paced(work, this.membershipQuotas, () => this.api.request("chat:membership:get", { chatId }, "chat:membership"));
+    if (!frame || !this.current(work)) return;
+    this.ownMembers.set(chatId, parseMembership(frame, chatId));
+  }
+}
+
+/** Client-side mirror of one upstream sliding-window limit, on the monotonic clock. */
+class Quota {
+  private readonly events: number[] = [];
+
+  constructor(private readonly max: number, private readonly windowMs: number) {}
+
+  /** Milliseconds until one more request fits; 0 when it fits now. */
+  delay(now: number): number {
+    while (this.events.length > 0 && now - this.events[0]! >= this.windowMs) this.events.shift();
+    return this.events.length < this.max ? 0 : this.events[this.events.length - this.max]! + this.windowMs - now;
+  }
+
+  take(now: number): void {
+    this.events.push(now);
   }
 }

@@ -27,6 +27,10 @@ function harness(options = {}) {
       if (options.admins) return options.admins(fields);
       return { type: 'chat:admins', chatId: fields.chatId, ownMemberId: ownId, admins };
     }
+    if (type === 'chat:membership:get') {
+      if (options.membership) return options.membership(fields);
+      return { type: 'chat:membership', chatId: fields.chatId, memberId: ownId };
+    }
     if (type === 'scam:check') {
       if (options.check) return options.check(fields);
       return { type: 'scam:result', ...fields, analysis: { probability: options.probability ?? 0.7, tactic: { kind: 'investment', confidence: 0.8 } } };
@@ -956,6 +960,79 @@ test('LINE.js without scam:check: messages are judged locally from their text, n
   await disabled.guard.whenIdle();
   assert.ok(disabled.notices.includes('SCAM_CHECK_DISABLED'));
   assert.deepEqual(disabled.calls, []);
+});
+
+test('local Jev checks are not held by the backend check quota', async () => {
+  let checks = 0;
+  const h = harness({
+    capabilities: ['chat:admins', 'chat:member-joined'], intervals: { checkIntervalMs: 60_000 },
+    scam: async () => { checks += 1; return { probability: 0.1 }; },
+  });
+  try {
+    for (let i = 1; i <= 3; i++) h.guard.handle({ type: 'message', message: message(i) });
+    await Promise.race([h.guard.whenIdle(), new Promise(resolve => setTimeout(resolve, 1000))]);
+    assert.equal(checks, 3);
+  } finally {
+    h.guard.stop();
+    await h.guard.whenIdle();
+  }
+});
+
+test('production send pacing releases a burst at once and holds only what exceeds the per-second budget', async () => {
+  const chats = Array.from({ length: 6 }, (_, i) => 'm' + String(i).padStart(32, '0'));
+  const dispatches = [];
+  const h = harness({
+    chats, probability: 0.9, intervals: { sendIntervalMs: undefined },
+    onRequest: type => { if (type === 'message:send') dispatches.push(performance.now()); },
+  });
+  chats.forEach((channelId, i) => h.guard.handle({ type: 'message', message: message(i + 1, { channelId }) }));
+  await h.guard.whenIdle();
+  assert.equal(dispatches.length, 6);
+  assert.ok(dispatches[4] - dispatches[0] < 500, 'five sends fit the window without spacing');
+  assert.ok(dispatches[5] - dispatches[0] >= 1100, 'the sixth waits for the per-second window');
+});
+
+test('chat:members backends discover the own OpenChat identity by membership, leaving admin lookups to notifications', async () => {
+  const capabilities = ['chat:admins', 'chat:members', 'chat:member-joined'];
+  const texts = [];
+  const h = harness({ capabilities, scam: async text => { texts.push(text); return { probability: 0.9 }; } });
+  h.guard.handle({ type: 'message', message: message(1, { senderId: ownId, text: '自己的手機訊息' }) });
+  h.guard.handle({ type: 'message', message: message(2) });
+  await h.guard.whenIdle();
+  assert.deepEqual(texts, ['投資邀請'], 'the own phone message is excluded before any paid check');
+  assert.deepEqual(h.calls.map(call => call.type), ['chat:membership:get', 'chat:admins:get', 'message:send']);
+
+  // A malformed answer is never taken as an identity, so nothing is analysed or sent.
+  const bad = harness({
+    capabilities, scam: async text => { texts.push(text); return { probability: 1 }; },
+    membership: fields => ({ type: 'chat:membership', chatId: fields.chatId, memberId: userId }),
+  });
+  bad.guard.handle({ type: 'message', message: message(3) });
+  await bad.guard.whenIdle();
+  assert.equal(texts.length, 1);
+  assert.equal(bad.sends.length, 0);
+  assert.ok(bad.notices.includes('ANALYSIS_OR_NOTIFICATION_FAILED'));
+});
+
+test('flagged messages awaiting intent review free their analysis slot; reviews are bounded on their own', async () => {
+  const gate = Promise.withResolvers();
+  let reviews = 0;
+  const checked = [];
+  const h = harness({
+    capabilities: ['chat:admins', 'chat:member-joined'],
+    scam: async text => { checked.push(text); return { probability: text === '可疑' ? 0.9 : 0.1 }; },
+    review: async () => { reviews += 1; await gate.promise; return true; },
+  });
+  for (let i = 1; i <= 6; i++) h.guard.handle({ type: 'message', message: message(i, { text: '可疑' }) });
+  for (let i = 7; i <= 10; i++) h.guard.handle({ type: 'message', message: message(i, { text: '早安' }) });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(reviews, 4, 'at most four reviews run at once');
+  assert.equal(checked.filter(text => text === '早安').length, 4, 'ordinary messages are checked while reviews are pending');
+  // A take-back releases a message still waiting for a review slot; it is never reviewed.
+  h.guard.handle({ type: 'message:unsend', chatId, messageId: '5' });
+  gate.resolve();
+  await h.guard.whenIdle();
+  assert.equal(reviews, 5);
 });
 
 test('note Jev hits produce an unmentioned warning; only confirmed intent mentions admins, even above the direct threshold', async () => {
