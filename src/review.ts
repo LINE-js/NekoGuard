@@ -5,6 +5,10 @@ const OPENAI_ENDPOINT = "https://api.openai.com/v1/responses";
 const MAX_TEXT_CHARS = 8000;
 
 export type ReviewProvider = "openai" | "anthropic";
+/** OpenAI `reasoning.effort`; which values a model accepts is model-dependent. */
+export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+/** OpenAI `service_tier`; `fast` (alias `priority`) is quicker at a higher price. Availability is model-dependent. */
+export type ServiceTier = "auto" | "default" | "flex" | "scale" | "priority" | "fast" | "ultrafast";
 
 const VERDICT_NAME = "report_intent";
 
@@ -38,6 +42,10 @@ function prompt(text: string, detectorProbability: number): string {
 export interface IntentReviewerOptions {
   apiKey: string;
   model: string;
+  /** OpenAI only; omitted means the model's own default (`medium` for gpt-6-luna). */
+  reasoningEffort?: ReasoningEffort;
+  /** OpenAI only; omitted means the project's configured tier. */
+  serviceTier?: ServiceTier;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
 }
@@ -118,6 +126,9 @@ export class OpenAIReviewer implements IntentReviewer {
       // Includes reasoning tokens; a cut-off answer is reported as invalid, never guessed at.
       max_output_tokens: 2000,
       text: { format: { type: "json_schema", name: VERDICT_NAME, strict: true, schema: VERDICT_SCHEMA } },
+      // Sent only when configured, so models without reasoning still accept the request.
+      ...(this.options.reasoningEffort ? { reasoning: { effort: this.options.reasoningEffort } } : {}),
+      ...(this.options.serviceTier ? { service_tier: this.options.serviceTier } : {}),
     });
     if (!record(body) || body.status !== "completed" || !Array.isArray(body.output)) throw new Error("REVIEW_INVALID_RESPONSE");
     const message = body.output.find((item: unknown) => record(item) && item.type === "message");

@@ -69,15 +69,26 @@ jev: # 後端為內建 chat:member-joined 的 LINE.js 時必填：詐騙訊息�
   model: jev-1.13.0
 review: # 選填；Jev 達門檻後的意圖複判
   provider: openai # 主要供應者：openai 或 anthropic；另一個有金鑰時自動作為備援
+  # timeoutSeconds: 30 # 選填；每次請求的等待秒數（1–120）
   openai:
     apiKey: '' # 可改用 NEKOGUARD_OPENAI_API_KEY
     model: gpt-6-luna
+    # reasoningEffort: medium # 選填；省略時用模型預設
+    # serviceTier: fast # 選填；省略時沿用 OpenAI 專案設定
   anthropic:
     apiKey: '' # 可改用 NEKOGUARD_ANTHROPIC_API_KEY
     model: claude-haiku-5-5
 ```
 
-**意圖分析供應者**：`review.provider` 決定主要供應者（省略時為 `openai`）；另一個供應者有金鑰時作為備援，只有主要供應者失敗（網路、HTTP 錯誤、格式不符、拒答或回應不完整）時才改問備援，log 記 `REVIEW_FALLBACK from=openai to=anthropic reason=…`。主要供應者已給出判定（含判定非詐騙）就以該結果為準，不會再找備援翻案；兩者皆失敗才算複判失敗。只設定一把金鑰時就只用該供應者、沒有備援；明確指定 `provider` 卻沒有該供應者金鑰會拒絕啟動。啟動時記 `REVIEW_PROVIDERS primary=openai:gpt-6-luna backup=anthropic:claude-haiku-5-5`。OpenAI 使用 Responses API（`store: false`，不保留對話）與 strict JSON Schema；Claude 沿用強制工具呼叫。兩者共用同一套判準與 8000 字元上限，錯誤只記固定代碼，不記金鑰、訊息或回應內容。舊版的 `review.apiKey`／`review.model` 與 `NEKOGUARD_REVIEW_API_KEY` 已改名，若仍存在會拒絕啟動並提示新位置，避免複判被默默關閉。
+**意圖分析供應者**：`review.provider` 決定主要供應者（省略時為 `openai`）；另一個供應者有金鑰時作為備援，只有主要供應者失敗（網路、HTTP 錯誤、逾時、格式不符、拒答或回應不完整）時才改問備援，log 記 `REVIEW_FALLBACK from=openai to=anthropic reason=…`。主要供應者已給出判定（含判定非詐騙）就以該結果為準，不會再找備援翻案；兩者皆失敗才算複判失敗。只設定一把金鑰時就只用該供應者、沒有備援；明確指定 `provider` 卻沒有該供應者金鑰會拒絕啟動。啟動時記 `REVIEW_PROVIDERS primary=openai:gpt-6-luna backup=anthropic:claude-haiku-5-5`。OpenAI 使用 Responses API（`store: false`，不保留對話）與 strict JSON Schema；Claude 沿用強制工具呼叫。兩者共用同一套判準與 8000 字元上限，錯誤只記固定代碼，不記金鑰、訊息或回應內容。舊版的 `review.apiKey`／`review.model` 與 `NEKOGUARD_REVIEW_API_KEY` 已改名，若仍存在會拒絕啟動並提示新位置，避免複判被默默關閉。
+
+**意圖分析速度設定**（皆選填，省略時行為不變）：
+
+- `review.timeoutSeconds`（1–120，預設 30）：每次請求的等待上限，主要與備援各自計算。主要供應者卡住不回時，要等滿這段時間才改問備援，所以調短能更快換手，但較慢的有效回覆（例如 `medium` 推理）可能被切掉而改由備援判定。
+- `review.openai.reasoningEffort`（`none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`，可用值依模型而定）：省略時不送出，使用模型預設（`gpt-6-luna` 為 `medium`）。調低能縮短等待與 token 費用，但判讀品質需以實際訊息驗證。
+- `review.openai.serviceTier`（`auto`、`default`、`flex`、`scale`、`priority`、`fast`、`ultrafast`）：省略時不送出，沿用 OpenAI 專案設定。`fast`（等同 `priority`）依官方說明生成最快約 2.5 倍、延遲較穩定，價格為標準的 2 倍；也可直接在 OpenAI 專案設定開啟，不需改這裡。流量上升太快時 OpenAI 可能降回標準速度。
+
+有設定時啟動 log 會列出，例如 `REVIEW_PROVIDERS primary=openai:gpt-6-luna(effort=low,tier=fast) backup=anthropic:claude-haiku-5-5 timeout=12s`。模型或帳號不支援所選值時 OpenAI 會回錯誤，視為主要供應者失敗並改用備援；拼錯的值、超出範圍的秒數，或把 OpenAI 專用選項設在 `anthropic` 下，都會拒絕啟動。
 
 **兩階段判斷**：設定任一意圖分析金鑰後，詐騙訊息分兩階段處理。第一階段：Jev 機率達 `thresholdPercent` 時，立刻回覆該則訊息標注「疑似詐騙預警」（附機率與手法、提醒勿點連結或匯款），**不 @ 任何人**，也不查管理員；log 記 `SCAM_MARKED probability=…%`。第二階段：把該則文字送交意圖分析（主要供應者，失敗時改用備援）判斷話語中是否有引導他人受騙的意圖，連結、價格或邀請本身不算證據；判定為詐騙才再回覆一則「疑似詐騙提醒」並 @ 所有管理員（log `SCAM_REVIEWED … intent=scam` 與 `SCAM_ALERT_SENT`），否則只留第一階段標注（`intent=dismissed`）。主要與備援都失敗或回應格式不符時仍 @ 管理員，訊息註明「發言意圖分析失敗」，並記 `REVIEW_FAILED`／`REVIEW_INVALID_RESPONSE`／`REVIEW_REFUSED`。未設定金鑰時維持單一階段：達門檻直接 @ 管理員。另可設定 `detection.directAlertPercent`（選填，不得低於 `thresholdPercent`）：Jev 機率達此值時跳過標注與複判，直接 @ 所有管理員；省略則所有命中都走兩階段。訊息文字只在送出複判時暫存，不寫入 log；僅適用詐騙訊息，不影響新成員檢查。
 
@@ -142,6 +153,7 @@ npm audit --audit-level=high
 - 圖片欄位缺漏驗證：全套 82 項測試通過，涵蓋缺漏圖片欄位仍查詢成員路徑，以及 CDN 403／404 保留未知結果、不送付費模型請求。實際 `dist/main.js` 經本機 WebSocket 接收兩個圖片欄位皆缺漏的事件，成功由真實 CDN 下載回報成員的 JPEG，再交給受控模型回應並輸出 `status=checked`。真實圖片 GET 為 HTTP 200、81,002 bytes；模型未連線，smoke 中 5% 為 fixture，不是該照片的真實判讀。
 - 意圖分析供應者驗證：全套 84 項測試通過，涵蓋 OpenAI Responses 請求（`store: false`、strict JSON Schema、略過 reasoning 項目讀取訊息）、拒答／未完成／格式錯誤代碼、主要判定（含否定）不再找備援、只在失敗時備援且備援失敗為最終錯誤，以及設定的預設順序、切換、環境變數優先、空金鑰範例不阻擋啟動、舊欄位明確報錯。實際啟動 `dist/main.js` 經本機 WebSocket：OpenAI 回 503 時記 `REVIEW_FALLBACK from=openai to=anthropic reason=REVIEW_FAILED`，改由 Claude 判定後 @ 管理員；`provider: anthropic` 時只呼叫 Claude。log 不含金鑰、訊息原文或上游錯誤內容。TypeSafe／OpenAI／Anthropic 回應皆為 fixture，未呼叫真實 API，`gpt-6-luna` 的實際判讀品質尚未驗證。
 - 排程加速驗證：全套 88 項測試通過，新增四項在舊版皆失敗：本機 Jev 判斷不受後端分析額度阻擋、正式限額下 5 則通知可一次送出而第 6 則等到每秒視窗之後、`chat:members` 後端以身分查詢排除自己且格式不符的成員 ID 不採用、等待意圖分析時一般訊息仍會檢查（同時最多 4 個意圖分析，等待名額時被收回的訊息不送分析）。另發現並修正改寫過程中的競態：額度扣除與送出若分在不同 microtask，作廢的工作可能在兩者之間送出，現已在同一輪完成。實際啟動 `dist/main.js` 連接本機 WebSocket 後端（依 LINE.js 預設限額回 `RATE_LIMITED`，管理員查詢 800 ms、身分查詢 200 ms、發送 150 ms；TypeSafe 600 ms、OpenAI 1.5 s），3 個社群共 11 則訊息、其中 3 則詐騙：舊版第一則通知 19.7 s、三則管理員通知全部送達 65.7 s，新版分別為 0.8 s 與 4.5 s；成員全分頁查詢由 6 次降為 3 次，全程沒有任何 `RATE_LIMITED`，log 不含金鑰或訊息原文。另以同樣延遲在程式內模擬 4 則詐騙同時進來、後接 8 則一般訊息：一般訊息完成 Jev 的時間由 2.9–3.5 s 降為 1.4–2.0 s。延遲為 fixture 設定值，不代表真實 LINE／TypeSafe／OpenAI 的回應時間。
+- 意圖分析速度設定驗證：全套 89 項測試通過，涵蓋未設定時請求不含 `reasoning`／`service_tier`（沿用模型與專案預設）、設定後如實送出、`timeoutSeconds` 套用到主要與備援且限制在 1–120、卡住的主要供應者在逾時後交給備援，以及拼錯的值與 OpenAI 專用選項設在 `anthropic` 下拒絕啟動。實際啟動 `dist/main.js`，設定 `timeoutSeconds: 2`、`reasoningEffort: low`、`serviceTier: fast` 並讓 OpenAI fixture 永不回應：啟動 log 為 `REVIEW_PROVIDERS primary=openai:gpt-6-luna(effort=low,tier=fast) backup=anthropic:claude-haiku-5-5 timeout=2s`，fixture 收到 `service_tier: fast`，三則複判都在 2 秒後記 `REVIEW_FALLBACK … reason=REVIEW_FAILED` 並由 Claude fixture 判定，全部通知 5.9 s 內送達，log 不含任何金鑰。未呼叫真實 OpenAI／Anthropic，各設定值的實際延遲與判讀品質尚未量測。
 - 記事兩階段驗證：`npm test` 共 78 項通過，包含門檻、意圖否定／失敗僅留預警、高分仍複判、複判期間先發預警、確認後刷新並分批 @ 21 位現任管理員，以及群組兩階段均不 @ 人。實際 `ApiClient`／`ScamGuard` 經本機 WebSocket 驗證社群與群組各收到兩階段詳細提醒，95% 的預警先送出且無提及；複判確認後社群僅 @ 更新後的管理員，群組不查管理員也不 @ 人。全部提醒保留「暱稱」、機率與手法，不含原文或 `replyTo`。使用加速限流與受控 LINE／模型回應，未連接真實外部服務。
 - Jev 判準調整驗證：`npm test` 共 78 項通過。實際執行 `ScamChecker`，以一般風險短句與假客服誘導付款／安裝軟體的對照文字檢查出站請求，確認兩者使用相同通用判準、原文照送、沒有特定句子白名單且原始機率不被改寫。回應使用受控 fixture；未呼叫真實 TypeSafe，無法據此宣稱「你電腦被駭更貴」的新模型機率已降低。
 - API 傳輸 smoke：使用同一組 120 筆管理員查詢、分析及通知請求，實際連接本機 WebSocket，比較優化前後雙向傳輸量。JSON payload 減少 21.2%；含 WebSocket framing 的資料量減少 20.7%（不含握手、TCP/IP 或 TLS overhead）。此為固定小訊息樣本，不代表所有流量或 Jev 推論延遲均有同等改善。

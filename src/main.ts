@@ -29,8 +29,13 @@ async function main(): Promise<void> {
     (from, to, code) => console.info(`REVIEW_FALLBACK from=${from} to=${to} reason=${code}`),
   ) : undefined;
   if (config.review) {
+    // Options are shown only when configured; otherwise the model's or project's defaults apply.
+    const label = (entry: (typeof config.review)[number]) => {
+      const options = [entry.reasoningEffort && `effort=${entry.reasoningEffort}`, entry.serviceTier && `tier=${entry.serviceTier}`].filter(Boolean);
+      return `${entry.provider}:${entry.model}${options.length ? `(${options.join(",")})` : ""}`;
+    };
     const [primary, backup] = config.review;
-    console.info(`REVIEW_PROVIDERS primary=${primary!.provider}:${primary!.model} backup=${backup ? `${backup.provider}:${backup.model}` : "none"}`);
+    console.info(`REVIEW_PROVIDERS primary=${label(primary!)} backup=${backup ? label(backup) : "none"}${primary!.timeoutMs ? ` timeout=${primary!.timeoutMs / 1000}s` : ""}`);
   }
   let stopped = false;
   let retryTimer: NodeJS.Timeout | undefined;

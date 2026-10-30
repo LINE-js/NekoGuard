@@ -122,6 +122,20 @@ test('review providers: OpenAI is primary by default, Claude backs it up, and th
     // The shipped example: a chosen provider with empty keys leaves the review off rather than refusing to start.
     await withConfig(`${yaml()}review:\n  provider: openai\n  openai:\n    apiKey: ''\n  anthropic:\n    apiKey: ''\n`, async (path) => assert.equal((await loadConfig(path)).review, undefined));
     await withConfig(`${yaml()}review:\n  provider: gemini\n`, async (path) => assert.rejects(loadConfig(path), /review\.provider must be/));
+    // OpenAI reasoning effort: absent keeps the model default; a typo or a Claude effort is refused at startup.
+    await withConfig(`${yaml()}review:\n  openai:\n    apiKey: sk-openai\n    reasoningEffort: low\n`, async (path) => assert.deepEqual((await loadConfig(path)).review, [{ provider: 'openai', apiKey: 'sk-openai', model: 'gpt-6-luna', reasoningEffort: 'low' }]));
+    await withConfig(`${yaml()}review:\n  openai:\n    apiKey: sk-openai\n    reasoningEffort: fast\n`, async (path) => assert.rejects(loadConfig(path), /review\.openai\.reasoningEffort must be one of/));
+    await withConfig(`${yaml()}review:\n  anthropic:\n    apiKey: sk-claude\n    reasoningEffort: low\n`, async (path) => assert.rejects(loadConfig(path), /review\.anthropic\.reasoningEffort is only supported for openai/));
+    // Fast mode is opt-in per request; the timeout applies to every provider and is bounded.
+    await withConfig(`${yaml()}review:\n  timeoutSeconds: 12\n  openai:\n    apiKey: sk-openai\n    serviceTier: fast\n  anthropic:\n    apiKey: sk-claude\n`, async (path) => assert.deepEqual((await loadConfig(path)).review, [
+      { provider: 'openai', apiKey: 'sk-openai', model: 'gpt-6-luna', serviceTier: 'fast', timeoutMs: 12_000 },
+      { provider: 'anthropic', apiKey: 'sk-claude', model: 'claude-haiku-5-5', timeoutMs: 12_000 },
+    ]));
+    await withConfig(`${yaml()}review:\n  openai:\n    apiKey: sk-openai\n    serviceTier: turbo\n`, async (path) => assert.rejects(loadConfig(path), /review\.openai\.serviceTier must be one of/));
+    await withConfig(`${yaml()}review:\n  anthropic:\n    apiKey: sk-claude\n    serviceTier: fast\n`, async (path) => assert.rejects(loadConfig(path), /review\.anthropic\.serviceTier is only supported for openai/));
+    for (const timeout of ['0', '121', '"12"', '.nan']) {
+      await withConfig(`${yaml()}review:\n  timeoutSeconds: ${timeout}\n  openai:\n    apiKey: sk-openai\n`, async (path) => assert.rejects(loadConfig(path), /review\.timeoutSeconds must be/));
+    }
     process.env.NEKOGUARD_OPENAI_API_KEY = 'sk-env-openai';
     process.env.NEKOGUARD_ANTHROPIC_API_KEY = 'sk-env-claude';
     await withConfig(`${yaml()}${both}`, async (path) => assert.deepEqual((await loadConfig(path)).review.map(entry => entry.apiKey), ['sk-env-openai', 'sk-env-claude']));

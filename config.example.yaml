@@ -24,9 +24,16 @@ jev:
 # 聊天：未設金鑰或主要＋備援都失敗時仍會 @ 管理員。記事：不貼原文；都失敗時只保留預警。
 review:
   provider: openai
+  # 選填：每次意圖分析請求的等待秒數（1–120，省略為 30）。主要供應者逾時才改問備援，調短可更快換手，但可能切掉較慢的有效回覆。
+  # timeoutSeconds: 30
   openai:
     apiKey: ''
     model: gpt-6-luna
+    # 選填：OpenAI reasoning.effort（none、minimal、low、medium、high、xhigh、max；可用值依模型而定）。
+    # 省略時不送出、使用模型預設（gpt-6-luna 為 medium）。調低可縮短等待與費用，但判讀品質需自行驗證。
+    # reasoningEffort: medium
+    # 選填：OpenAI service_tier。fast（同 priority）生成最快約 2.5 倍、價格為 2 倍；省略時沿用 OpenAI 專案設定。
+    # serviceTier: fast
   anthropic:
     apiKey: ''
     model: claude-haiku-5-5

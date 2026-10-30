@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { parse } from 'yaml';
+import type { ReasoningEffort, ServiceTier } from './review.js';
 
 export interface Config {
   api: { url: string; token: string };
@@ -15,6 +16,12 @@ export interface ReviewerConfig {
   provider: 'openai' | 'anthropic';
   apiKey: string;
   model: string;
+  /** OpenAI only; absent means the model's default. */
+  reasoningEffort?: ReasoningEffort;
+  /** OpenAI only; absent means the project's service tier. */
+  serviceTier?: ServiceTier;
+  /** Per request; absent means 30 seconds. */
+  timeoutMs?: number;
 }
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -101,8 +108,13 @@ export async function loadConfig(path = 'config.yaml'): Promise<Config> {
   if (review.provider !== undefined && (openai || anthropic) && !(primary === 'openai' ? openai : anthropic)) {
     throw new Error(`review.provider is ${primary} but no ${primary} API key is configured.`);
   }
+  const timeoutSeconds = review.timeoutSeconds;
+  if (timeoutSeconds !== undefined && (typeof timeoutSeconds !== 'number' || !Number.isFinite(timeoutSeconds) || timeoutSeconds < 1 || timeoutSeconds > 120)) {
+    throw new Error('review.timeoutSeconds must be a number between 1 and 120.');
+  }
   const reviewers = (primary === 'openai' ? [openai, anthropic] : [anthropic, openai])
-    .filter((entry): entry is ReviewerConfig => entry !== undefined);
+    .filter((entry): entry is ReviewerConfig => entry !== undefined)
+    .map(entry => timeoutSeconds === undefined ? entry : { ...entry, timeoutMs: timeoutSeconds * 1000 });
   return {
     api: { url, token },
     detection: { thresholdPercent, crownThresholdPercent, ...(directAlertPercent === undefined ? {} : { directAlertPercent }) },
@@ -110,6 +122,9 @@ export async function loadConfig(path = 'config.yaml'): Promise<Config> {
     ...(reviewers.length > 0 ? { review: reviewers } : {}),
   };
 }
+
+const REASONING_EFFORTS: readonly ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+const SERVICE_TIERS: readonly ServiceTier[] = ['auto', 'default', 'flex', 'scale', 'priority', 'fast', 'ultrafast'];
 
 /** One provider's key (environment first) and model; undefined when no key is configured. */
 function reviewer(review: Record<string, unknown>, provider: ReviewerConfig['provider'], envName: string, defaultModel: string): ReviewerConfig | undefined {
@@ -122,7 +137,19 @@ function reviewer(review: Record<string, unknown>, provider: ReviewerConfig['pro
   }
   const model = section.model ?? defaultModel;
   if (typeof model !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(model)) throw new Error(`review.${provider}.model must be a model name.`);
-  return apiKey ? { provider, apiKey, model } : undefined;
+  const reasoningEffort = openaiChoice(section, provider, 'reasoningEffort', REASONING_EFFORTS);
+  const serviceTier = openaiChoice(section, provider, 'serviceTier', SERVICE_TIERS);
+  if (!apiKey) return undefined;
+  return { provider, apiKey, model, ...(reasoningEffort ? { reasoningEffort } : {}), ...(serviceTier ? { serviceTier } : {}) };
+}
+
+/** An OpenAI-only option from a fixed list; undefined when absent. Typos are refused, not sent to the API. */
+function openaiChoice<T extends string>(section: Record<string, unknown>, provider: ReviewerConfig['provider'], key: string, allowed: readonly T[]): T | undefined {
+  const value = section[key];
+  if (value === undefined || value === null) return undefined;
+  if (provider !== 'openai') throw new Error(`review.${provider}.${key} is only supported for openai.`);
+  if (typeof value !== 'string' || !allowed.includes(value as T)) throw new Error(`review.openai.${key} must be one of ${allowed.join(', ')}.`);
+  return value as T;
 }
 
 function percent(value: unknown, name: string): number {

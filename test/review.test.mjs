@@ -45,7 +45,24 @@ test('the OpenAI reviewer uses an unstored strict-schema Responses request and r
   assert.ok(call.body.input.includes('<message>\n加我投資群\n</message>'));
   assert.ok(call.body.instructions.includes('untrusted data'));
   assert.ok(!JSON.stringify(call.body).includes('sk-openai'));
+  assert.equal(call.body.reasoning, undefined, 'without a configured effort the model default applies');
   assert.equal(await new OpenAIReviewer({ apiKey: 'k', model: 'm', fetchImpl: reply(openaiVerdict(false)) }).isScam('x', 0.7), false);
+  const tuned = [];
+  await new OpenAIReviewer({ apiKey: 'k', model: 'gpt-6-luna', reasoningEffort: 'low', serviceTier: 'fast', fetchImpl: async (url, init) => { tuned.push(JSON.parse(init.body)); return reply(openaiVerdict(true))(); } }).isScam('x', 0.7);
+  assert.deepEqual(tuned[0].reasoning, { effort: 'low' });
+  assert.equal(tuned[0].service_tier, 'fast');
+  assert.equal(call.body.service_tier, undefined, 'without a configured tier the project setting applies');
+});
+
+test('a hung provider is abandoned after the configured timeout so the backup can answer', async () => {
+  const hang = async (url, init) => new Promise((resolve, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason)));
+  const started = performance.now();
+  const chain = new ReviewChain([
+    new OpenAIReviewer({ apiKey: 'k', model: 'm', timeoutMs: 50, fetchImpl: hang }),
+    new AnthropicReviewer({ apiKey: 'k', model: 'm', timeoutMs: 50, fetchImpl: reply({ content: [{ type: 'tool_use', name: 'report_intent', input: { scam: true } }] }) }),
+  ]);
+  assert.equal(await chain.isScam('x', 0.7), true);
+  assert.ok(performance.now() - started < 1000);
 });
 
 test('each provider reports bad, refused, incomplete or failed responses as codes without the key or body', async () => {
