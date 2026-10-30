@@ -351,7 +351,9 @@ test('parallel chats share analysis, administrator and send pacing even when wai
     for (const [type, minimum, count] of [['scam:check', 10, 4], ['chat:admins:get', 15, 8], ['message:send', 40, 4]]) {
       const times = dispatches.filter(call => call.type === type).map(call => call.at);
       assert.equal(times.length, count);
-      for (let i = 1; i < times.length; i++) assert(times[i] - times[i - 1] >= minimum, type);
+      // A dispatch is recorded just after its quota is charged, and Date.now() floors to whole
+      // milliseconds, so the measured gap may read up to 1 ms short of the enforced one.
+      for (let i = 1; i < times.length; i++) assert(times[i] - times[i - 1] >= minimum - 1, type);
     }
   } finally {
     h.guard.stop();
@@ -989,7 +991,8 @@ test('production send pacing releases a burst at once and holds only what exceed
   await h.guard.whenIdle();
   assert.equal(dispatches.length, 6);
   assert.ok(dispatches[4] - dispatches[0] < 500, 'five sends fit the window without spacing');
-  assert.ok(dispatches[5] - dispatches[0] >= 1100, 'the sixth waits for the per-second window');
+  // Recorded just after the first send was charged, so allow 1 ms of measurement slack.
+  assert.ok(dispatches[5] - dispatches[0] >= 1099, 'the sixth waits for the per-second window');
 });
 
 test('chat:members backends discover the own OpenChat identity by membership, leaving admin lookups to notifications', async () => {
