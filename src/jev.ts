@@ -116,7 +116,7 @@ async function readLimited(response: Response, limit: number): Promise<Buffer> {
 
 // TypeSafe documents English as the language Jev answers most accurately in, so the questions are
 // English; the message itself is sent as it is.
-const TACTICS = {
+export const TACTICS = {
   investment: "Investment, stock tips, crypto or get-rich-quick schemes, invitations to investment groups",
   impersonation: "Pretending to be a government agency, police, prosecutor, bank, telecom, delivery company or customer service",
   phishing: "A link or request to log in, verify an account, or hand over passwords, verification codes or card numbers",

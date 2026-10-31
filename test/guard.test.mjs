@@ -881,7 +881,7 @@ test('every judged join reports its verdict, including ones that raise no alert'
 test('a detector hit is marked at once without mentions; only a scam intent then mentions every admin', async () => {
   const seen = [];
   for (const verdict of [false, true]) {
-    const h = harness({ probability: 0.9, review: async (text, probability) => { seen.push([text, probability]); return verdict; } });
+    const h = harness({ probability: 0.9, review: async (text, analysis) => { seen.push([text, analysis]); return verdict; } });
     h.guard.handle({ type: 'message', message: message(1) });
     await h.guard.whenIdle();
     const [mark, ...alerts] = h.sends;
@@ -897,7 +897,8 @@ test('a detector hit is marked at once without mentions; only a scam intent then
     // Identity discovery looks up once; the stage-one mark adds none, the mention adds one.
     assert.equal(h.calls.filter(call => call.type === 'chat:admins:get').length, verdict ? 2 : 1);
   }
-  assert.deepEqual(seen, [['投資邀請', 0.9], ['投資邀請', 0.9]]);
+  const analysis = { probability: 0.9, tactic: { kind: 'investment', confidence: 0.8 } };
+  assert.deepEqual(seen, [['投資邀請', analysis], ['投資邀請', analysis]], 'the reviewer gets the detector tactic as a hint');
 });
 
 test('a failed review still mentions the admins and says the intent was not analysed; below-threshold messages are never reviewed', async () => {
@@ -1048,7 +1049,7 @@ test('note Jev hits produce an unmentioned warning; only confirmed intent mentio
     const h = harness({
       direct: 90,
       scam: async text => { seen.push(text); return { probability, tactic: { kind: 'investment', confidence: 0.8 } }; },
-      review: async (text, score) => { reviews++; assert.equal(text, note().text); assert.equal(score, probability); return verdict; },
+      review: async (text, analysis) => { reviews++; assert.equal(text, note().text); assert.deepEqual(analysis, { probability, tactic: { kind: 'investment', confidence: 0.8 } }); return verdict; },
     });
     h.guard.handle(note());
     await h.guard.whenIdle();

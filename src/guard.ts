@@ -48,8 +48,8 @@ interface GuardOptions {
   crown?: (picturePath: string) => Promise<number | null>;
   /** Judges message text locally; without it the backend's `scam:check` is used. */
   scam?: (text: string) => Promise<ScamAnalysis>;
-  /** Optional second opinion on a flagged message's intent; false drops the alert. */
-  review?: (text: string, probability: number) => Promise<boolean>;
+  /** Optional second opinion on a flagged message, given the text and the detector's analysis; false drops the alert. */
+  review?: (text: string, analysis: ScamAnalysis) => Promise<boolean>;
   /** Test clock seams; production observes the backend's 10 checks/minute (patched LINE.js only), 20 sends/minute and 10 lookups/second. */
   checkIntervalMs?: number;
   sendIntervalMs?: number;
@@ -432,7 +432,7 @@ export class ScamGuard extends EventEmitter {
       });
       let verdict: boolean;
       try {
-        verdict = await this.review(work, text!, analysis.probability);
+        verdict = await this.review(work, text!, analysis);
       } catch (error) {
         if (!this.current(work)) return;
         this.emit("notice", error instanceof Error && /^REVIEW_[A-Z_]+$/.test(error.message) ? error.message : "REVIEW_FAILED");
@@ -465,7 +465,7 @@ export class ScamGuard extends EventEmitter {
     // Stage two: only a scam intent in the wording brings the administrators in.
     let verdict: boolean | undefined;
     try {
-      verdict = await this.review(work, text, analysis.probability);
+      verdict = await this.review(work, text, analysis);
     } catch (error) {
       // A failed review must not hide a detector hit: mention the admins and say so.
       if (!this.current(work)) return;
@@ -524,7 +524,7 @@ export class ScamGuard extends EventEmitter {
    * messages waiting on the model does not stop Jev from checking everything else. When the review
    * pool is full the work keeps its analysis slot, which bounds the total in flight.
    */
-  private async review(work: Work, text: string, probability: number): Promise<boolean> {
+  private async review(work: Work, text: string, analysis: ScamAnalysis): Promise<boolean> {
     while (this.reviewing >= MAX_IN_FLIGHT) {
       if (!this.current(work)) throw new Error("REVIEW_CANCELLED");
       const controller = new AbortController();
@@ -545,7 +545,7 @@ export class ScamGuard extends EventEmitter {
     this.reviewing++;
     this.start();
     try {
-      return await this.options.review!(text, probability);
+      return await this.options.review!(text, analysis);
     } finally {
       this.reviewing--;
       // Every waiter rechecks; a stale one leaves without taking the slot.

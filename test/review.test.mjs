@@ -16,7 +16,7 @@ test('the Claude reviewer asks for a forced tool verdict and treats the message 
   const calls = [];
   const fetchImpl = async (url, init) => { calls.push({ url, init, body: JSON.parse(init.body) }); return reply({ content: [{ type: 'tool_use', name: 'report_intent', input: { scam: true } }] })(); };
   const reviewer = new AnthropicReviewer({ apiKey: 'sk-secret', model: 'claude-haiku-5-5', fetchImpl });
-  assert.equal(await reviewer.isScam('加我投資群', 0.65), true);
+  assert.equal(await reviewer.isScam('加我投資群', { probability: 0.65 }), true);
   const [call] = calls;
   assert.equal(call.url, 'https://api.anthropic.com/v1/messages');
   assert.equal(call.init.headers['x-api-key'], 'sk-secret');
@@ -24,6 +24,7 @@ test('the Claude reviewer asks for a forced tool verdict and treats the message 
   assert.equal(call.body.model, 'claude-haiku-5-5');
   assert.deepEqual(call.body.tool_choice, { type: 'tool', name: 'report_intent' });
   assert.ok(call.body.messages[0].content.includes('<message>\n加我投資群\n</message>'));
+  assert.ok(call.body.messages[0].content.includes('65% scam probability.'), 'without a tactic the hint is left out');
   assert.ok(!JSON.stringify(call.body).includes('sk-secret'));
 });
 
@@ -31,7 +32,7 @@ test('the OpenAI reviewer uses an unstored strict-schema Responses request and r
   const calls = [];
   const fetchImpl = async (url, init) => { calls.push({ url, init, body: JSON.parse(init.body) }); return reply(openaiVerdict(true))(); };
   const reviewer = new OpenAIReviewer({ apiKey: 'sk-openai', model: 'gpt-6-luna', fetchImpl });
-  assert.equal(await reviewer.isScam('加我投資群', 0.65), true);
+  assert.equal(await reviewer.isScam('加我投資群', { probability: 0.65, tactic: { kind: 'investment', confidence: 0.8 } }), true);
   const [call] = calls;
   assert.equal(call.url, 'https://api.openai.com/v1/responses');
   assert.equal(call.init.headers.Authorization, 'Bearer sk-openai');
@@ -43,12 +44,14 @@ test('the OpenAI reviewer uses an unstored strict-schema Responses request and r
   assert.deepEqual(call.body.text.format.schema.required, ['analysis', 'scam']);
   assert.equal(call.body.text.format.schema.additionalProperties, false);
   assert.ok(call.body.input.includes('<message>\n加我投資群\n</message>'));
+  assert.ok(call.body.input.includes('"investment" (Investment, stock tips') && call.body.input.includes('confidence 80%'), 'the detector tactic is passed as a hint');
+  assert.ok(!call.body.input.includes('65% scam probability.'));
   assert.ok(call.body.instructions.includes('untrusted data'));
   assert.ok(!JSON.stringify(call.body).includes('sk-openai'));
   assert.equal(call.body.reasoning, undefined, 'without a configured effort the model default applies');
-  assert.equal(await new OpenAIReviewer({ apiKey: 'k', model: 'm', fetchImpl: reply(openaiVerdict(false)) }).isScam('x', 0.7), false);
+  assert.equal(await new OpenAIReviewer({ apiKey: 'k', model: 'm', fetchImpl: reply(openaiVerdict(false)) }).isScam('x', { probability: 0.7 }), false);
   const tuned = [];
-  await new OpenAIReviewer({ apiKey: 'k', model: 'gpt-6-luna', reasoningEffort: 'low', serviceTier: 'fast', fetchImpl: async (url, init) => { tuned.push(JSON.parse(init.body)); return reply(openaiVerdict(true))(); } }).isScam('x', 0.7);
+  await new OpenAIReviewer({ apiKey: 'k', model: 'gpt-6-luna', reasoningEffort: 'low', serviceTier: 'fast', fetchImpl: async (url, init) => { tuned.push(JSON.parse(init.body)); return reply(openaiVerdict(true))(); } }).isScam('x', { probability: 0.7 });
   assert.deepEqual(tuned[0].reasoning, { effort: 'low' });
   assert.equal(tuned[0].service_tier, 'fast');
   assert.equal(call.body.service_tier, undefined, 'without a configured tier the project setting applies');
@@ -61,7 +64,7 @@ test('a hung provider is abandoned after the configured timeout so the backup ca
     new OpenAIReviewer({ apiKey: 'k', model: 'm', timeoutMs: 50, fetchImpl: hang }),
     new AnthropicReviewer({ apiKey: 'k', model: 'm', timeoutMs: 50, fetchImpl: reply({ content: [{ type: 'tool_use', name: 'report_intent', input: { scam: true } }] }) }),
   ]);
-  assert.equal(await chain.isScam('x', 0.7), true);
+  assert.equal(await chain.isScam('x', { probability: 0.7 }), true);
   assert.ok(performance.now() - started < 1000);
 });
 
@@ -77,7 +80,7 @@ test('each provider reports bad, refused, incomplete or failed responses as code
     [OpenAIReviewer, reply({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: 'not json' }] }] }), 'REVIEW_INVALID_RESPONSE'],
     [OpenAIReviewer, reply({ error: { message: 'sk-secret' } }, 429), 'REVIEW_FAILED'],
   ]) {
-    await assert.rejects(new Reviewer({ apiKey: 'sk-secret', model: 'm', fetchImpl }).isScam('x', 0.7), (error) => error.message === code);
+    await assert.rejects(new Reviewer({ apiKey: 'sk-secret', model: 'm', fetchImpl }).isScam('x', { probability: 0.7 }), (error) => error.message === code);
   }
 });
 
@@ -85,17 +88,17 @@ test('the chain keeps the primary verdict, falls back only on failure, and repor
   const stub = (provider, outcome) => ({ provider, calls: 0, async isScam() { this.calls++; if (outcome instanceof Error) throw outcome; return outcome; } });
   for (const verdict of [true, false]) {
     const primary = stub('openai', verdict), backup = stub('anthropic', !verdict), fallbacks = [];
-    assert.equal(await new ReviewChain([primary, backup], (...args) => fallbacks.push(args)).isScam('x', 0.7), verdict);
+    assert.equal(await new ReviewChain([primary, backup], (...args) => fallbacks.push(args)).isScam('x', { probability: 0.7 }), verdict);
     assert.equal(backup.calls, 0, 'a dismissal by the primary is final, not retried elsewhere');
     assert.deepEqual(fallbacks, []);
   }
   const fallbacks = [];
   const backup = stub('anthropic', true);
-  assert.equal(await new ReviewChain([stub('openai', new Error('REVIEW_REFUSED')), backup], (...args) => fallbacks.push(args)).isScam('x', 0.7), true);
+  assert.equal(await new ReviewChain([stub('openai', new Error('REVIEW_REFUSED')), backup], (...args) => fallbacks.push(args)).isScam('x', { probability: 0.7 }), true);
   assert.deepEqual(fallbacks, [['openai', 'anthropic', 'REVIEW_REFUSED']]);
   const leaky = [];
   await assert.rejects(
-    new ReviewChain([stub('anthropic', new Error('private text sk-secret')), stub('openai', new Error('REVIEW_INVALID_RESPONSE'))], (...args) => leaky.push(args)).isScam('x', 0.7),
+    new ReviewChain([stub('anthropic', new Error('private text sk-secret')), stub('openai', new Error('REVIEW_INVALID_RESPONSE'))], (...args) => leaky.push(args)).isScam('x', { probability: 0.7 }),
     (error) => error.message === 'REVIEW_INVALID_RESPONSE',
   );
   assert.deepEqual(leaky, [['anthropic', 'openai', 'REVIEW_FAILED']], 'unexpected errors are reduced to a fixed code');

@@ -4,6 +4,7 @@ import { loadConfig } from "./config.js";
 import { ScamGuard, type AlertEvent } from "./guard.js";
 import { CrownChecker, ScamChecker } from "./jev.js";
 import { AnthropicReviewer, OpenAIReviewer, ReviewChain } from "./review.js";
+import type { ScamAnalysis } from "./protocol.js";
 
 async function main(): Promise<void> {
   const { values } = parseArgs({ options: { config: { type: "string", default: "config.yaml" }, help: { type: "boolean" } } });
@@ -61,7 +62,7 @@ async function main(): Promise<void> {
       ...(crownChecker ? { crown: (path: string) => crownChecker.check(path) } : {}),
       ...(scamChecker ? { scam: (text: string) => scamChecker.check(text) } : {}),
       ...(config.detection.directAlertPercent === undefined ? {} : { directAlertPercent: config.detection.directAlertPercent }),
-      ...(reviewer ? { review: (text: string, probability: number) => reviewer.isScam(text, probability) } : {}),
+      ...(reviewer ? { review: (text: string, analysis: ScamAnalysis) => reviewer.isScam(text, analysis) } : {}),
     });
     let closed = false;
     let helloAt: number | undefined;
