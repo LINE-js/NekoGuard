@@ -876,8 +876,11 @@ const jpeg = () => new Response(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]));
 test('member image download failures report an unknown crown result rather than zero, after retrying a missing picture', async () => {
   for (const [status, code, fetches] of [[403, 'CROWN_PICTURE_FORBIDDEN', 1], [404, 'CROWN_PICTURE_NOT_FOUND', 3]]) {
     const h = await crownGuard(() => new Response('', { status }), { pictureRetryMs: [0, 0] });
+    const retries = [];
+    h.guard.on('pictureRetry', event => retries.push(`${event.attempt}/${event.total}`));
     h.joined('小明');
     await h.guard.whenIdle();
+    assert.deepEqual(retries, status === 404 ? ['1/2', '2/2'] : [], 'every scheduled retry is reported');
     assert.equal(h.fetched.length, fetches, `${status}: only a missing picture is fetched again, until the retries run out`);
     assert.deepEqual(h.notices.filter(notice => notice.startsWith('CROWN_')), [code]);
     assert.deepEqual(h.verdicts, [{ chatId, memberId: joinerId, crown: undefined, crownHit: false, nameHit: false, alert: false }]);
@@ -943,11 +946,14 @@ test('a profile update judges only what changed, skips managers and supersedes a
   assert.deepEqual(named.verdicts.map(verdict => [verdict.memberId, verdict.crown, verdict.nameHit, verdict.alert]), [[joinerId, undefined, false, false], ['p' + 'f'.repeat(32), undefined, true, true]]);
   assert.match(named.sends[0].text, /假皇冠機率：大頭貼未變更\n名稱含管理員相關字詞：是\n/u);
 
-  // Managers, and updates whose changes are missing or unknown, are not checked at all.
+  // Managers, and updates whose changes are missing or unknown, are not checked at all; a skipped manager is reported.
   const ignored = await crownGuard(() => jpeg());
+  const skips = [];
+  ignored.guard.on('skip', event => skips.push(event));
   for (const frame of [update('管理員', ['name', 'picture'], { role: 'admin' }), update('群管', []), update('群管', ['name', 'status']), update('群管', 'name')]) ignored.guard.handle(frame);
   await ignored.guard.whenIdle();
   assert.deepEqual([ignored.fetched.length, ignored.verdicts.length, ignored.sends.length], [0, 0, 0]);
+  assert.deepEqual(skips, [{ chatId, memberId: joinerId, reason: 'manager' }]);
 
   // The join's missing picture is still being waited for when the member sets a new one.
   const superseded = await crownGuard(attempt => attempt === 1 ? new Response('', { status: 404 }) : jpeg(), { pictureRetryMs: [60_000] });

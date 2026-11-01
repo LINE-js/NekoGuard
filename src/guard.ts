@@ -196,9 +196,14 @@ export class ScamGuard extends EventEmitter {
     }
     if (frame.type === "member:join" || frame.type === "chat:member-joined" || frame.type === "chat:member-updated") {
       const member = frame.type === "chat:member-updated" ? parseMemberUpdate(frame) : parseJoin(frame);
+      if (!member || !this.ready || !this.joinsSupported || this.channels.get(member.chatId) !== "square") return;
       // Managers may change their own profile freely; only ordinary members can be impostors.
-      if (!member || member.role || !this.ready || !this.joinsSupported || this.channels.get(member.chatId) !== "square"
-        || member.userId === this.ownMembers.get(member.chatId)) return;
+      const skipped = member.userId === this.ownMembers.get(member.chatId) ? "own" : member.role ? "manager" : undefined;
+      if (skipped) {
+        // Logged for profile updates, so an update that is not checked is visibly not checked.
+        if (member.changes) this.emit("skip", { chatId: member.chatId, memberId: member.userId, reason: skipped });
+        return;
+      }
       const key = `join:${member.chatId}:${member.userId}`;
       // A rejoin or a newer profile supersedes any check still pending for the member, including
       // a join still waiting for its picture: the newest picture is the one that matters.
@@ -545,6 +550,8 @@ export class ScamGuard extends EventEmitter {
     const delayMs = (this.options.pictureRetryMs ?? PICTURE_RETRY_MS)[attempt];
     if (delayMs === undefined) return false;
     work.pictureRetries = attempt + 1;
+    const { chatId, userId } = work.join!;
+    this.emit("pictureRetry", { chatId, memberId: userId, attempt: attempt + 1, total: (this.options.pictureRetryMs ?? PICTURE_RETRY_MS).length, delayMs });
     // Aborted by a rejoin, an invalidation or a reset; only a still-current join is queued again.
     const task: Promise<void> = this.wait(work, delayMs).then(() => {
       if (!this.current(work)) return;

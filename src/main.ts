@@ -122,6 +122,12 @@ async function main(): Promise<void> {
       const line = event.changes ? `PROFILE_CHECKED changes=${event.changes.join(",")}` : "JOIN_CHECKED";
       console.info(`${line} chat=${event.chatId} member=${event.memberId} status=${status} fake_crown=${crown} has_crown=${hasCrown} name=${event.nameHit} alert=${event.alert}`);
     });
+    guard.on("skip", (event: { chatId: string; memberId: string; reason: string }) => {
+      if (!closed) console.info(`PROFILE_SKIPPED chat=${event.chatId} member=${event.memberId} reason=${event.reason}`);
+    });
+    guard.on("pictureRetry", (event: { chatId: string; memberId: string; attempt: number; total: number; delayMs: number }) => {
+      if (!closed) console.info(`CROWN_PICTURE_RETRY chat=${event.chatId} member=${event.memberId} attempt=${event.attempt}/${event.total} in=${event.delayMs / 1000}s`);
+    });
     try {
       await client.connect();
       if (!closed && !stopped) console.info(`NekoGuard 已連線，詐騙判定門檻 ${config.detection.thresholdPercent}%，皇冠判定門檻 ${config.detection.crownThresholdPercent}%。`);
