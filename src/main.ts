@@ -106,18 +106,21 @@ async function main(): Promise<void> {
       if (event.kind === "mark") console.info(`SCAM_MARKED probability=${event.probability * 100}%`);
       else if (event.kind === "scam") console.info(`SCAM_ALERT_SENT probability=${event.probability * 100}% admins=${event.mentioned}/${event.total}`);
       else if (event.kind === "note") console.info(`NOTE_SCAM_ALERT_SENT probability=${event.probability * 100}%`);
-      else console.info(`JOIN_ALERT_SENT crown=${typeof event.crown === "number" ? `${event.crown * 100}%` : event.crown === null ? "none" : "unknown"} name=${event.nameHit} admins=${event.mentioned}/${event.total}`);
+      else console.info(`${event.changes ? "PROFILE_ALERT_SENT" : "JOIN_ALERT_SENT"} crown=${event.changes && !event.changes.includes("picture") ? "unchanged" : typeof event.crown === "number" ? `${event.crown * 100}%` : event.crown === null ? "none" : "unknown"} name=${event.nameHit} admins=${event.mentioned}/${event.total}`);
     });
     guard.on("review", (event: { probability: number; scam: boolean }) => {
       if (!closed) console.info(`SCAM_REVIEWED probability=${event.probability * 100}% intent=${event.scam ? "scam" : "dismissed"}`);
     });
-    guard.on("join", (event: { chatId: string; memberId: string; crown: number | null | undefined; crownHit: boolean; nameHit: boolean; alert: boolean }) => {
+    guard.on("join", (event: { chatId: string; memberId: string; crown: number | null | undefined; crownHit: boolean; nameHit: boolean; alert: boolean; changes?: string[] }) => {
       if (closed) return;
+      // A profile update logs PROFILE_CHECKED with what changed; an unchanged picture is not judged again.
+      const unchanged = event.changes !== undefined && !event.changes.includes("picture");
       // No picture means no crown (0%); "unknown" only when a picture could not be judged.
-      const crown = event.crown === undefined ? "unknown" : `${(event.crown ?? 0) * 100}%`;
-      const status = event.crown === undefined ? "unavailable" : event.crown === null ? "no_picture" : "checked";
-      const hasCrown = event.crown === undefined ? "unknown" : String(event.crownHit);
-      console.info(`JOIN_CHECKED chat=${event.chatId} member=${event.memberId} status=${status} fake_crown=${crown} has_crown=${hasCrown} name=${event.nameHit} alert=${event.alert}`);
+      const crown = unchanged ? "unchanged" : event.crown === undefined ? "unknown" : `${(event.crown ?? 0) * 100}%`;
+      const status = unchanged ? "unchanged" : event.crown === undefined ? "unavailable" : event.crown === null ? "no_picture" : "checked";
+      const hasCrown = unchanged ? "unchanged" : event.crown === undefined ? "unknown" : String(event.crownHit);
+      const line = event.changes ? `PROFILE_CHECKED changes=${event.changes.join(",")}` : "JOIN_CHECKED";
+      console.info(`${line} chat=${event.chatId} member=${event.memberId} status=${status} fake_crown=${crown} has_crown=${hasCrown} name=${event.nameHit} alert=${event.alert}`);
     });
     try {
       await client.connect();

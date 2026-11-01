@@ -924,6 +924,43 @@ test('joins waiting for their picture hold no analysis slot, and a rejoin or log
   assert.deepEqual(h.verdicts, []);
 });
 
+test('a profile update judges only what changed, skips managers and supersedes a join still waiting for its picture', async () => {
+  const update = (displayName, changes, extra = {}) => ({ type: 'chat:member-updated', chatId, member: { userId: joinerId, displayName, changes, ...extra } });
+  // A new picture is judged; the unchanged name is not checked again.
+  const picture = await crownGuard(() => jpeg());
+  picture.guard.handle(update('群管小豬', ['picture']));
+  await picture.guard.whenIdle();
+  assert.equal(picture.fetched.length, 1);
+  assert.deepEqual(picture.verdicts, [{ chatId, memberId: joinerId, crown: 0.93, crownHit: true, nameHit: false, alert: true, changes: ['picture'] }]);
+  assert.match(picture.sends[0].text, /^疑似冒充管理員提醒\n成員更新個人檔案：群管小豬\n成員 ID：p(e){32}\n假皇冠機率：93%\n名稱未變更\n/u);
+
+  // A new name alone costs no picture fetch or Jev call; only an admin-like one alerts.
+  const named = await crownGuard(() => jpeg());
+  named.guard.handle(update('小豬', ['name']));
+  named.guard.handle(update('群 管', ['name'], { userId: 'p' + 'f'.repeat(32) }));
+  await named.guard.whenIdle();
+  assert.equal(named.fetched.length, 0);
+  assert.deepEqual(named.verdicts.map(verdict => [verdict.memberId, verdict.crown, verdict.nameHit, verdict.alert]), [[joinerId, undefined, false, false], ['p' + 'f'.repeat(32), undefined, true, true]]);
+  assert.match(named.sends[0].text, /假皇冠機率：大頭貼未變更\n名稱含管理員相關字詞：是\n/u);
+
+  // Managers, and updates whose changes are missing or unknown, are not checked at all.
+  const ignored = await crownGuard(() => jpeg());
+  for (const frame of [update('管理員', ['name', 'picture'], { role: 'admin' }), update('群管', []), update('群管', ['name', 'status']), update('群管', 'name')]) ignored.guard.handle(frame);
+  await ignored.guard.whenIdle();
+  assert.deepEqual([ignored.fetched.length, ignored.verdicts.length, ignored.sends.length], [0, 0, 0]);
+
+  // The join's missing picture is still being waited for when the member sets a new one.
+  const superseded = await crownGuard(attempt => attempt === 1 ? new Response('', { status: 404 }) : jpeg(), { pictureRetryMs: [60_000] });
+  superseded.joined('小豬');
+  await new Promise(resolve => setTimeout(resolve, 20));
+  superseded.guard.handle(update('小豬', ['picture']));
+  const started = performance.now();
+  await superseded.guard.whenIdle();
+  assert.ok(performance.now() - started < 1000, 'the join no longer waits once the update replaced it');
+  assert.equal(superseded.fetched.length, 2);
+  assert.deepEqual(superseded.verdicts.map(verdict => verdict.changes), [['picture']]);
+});
+
 test('every judged join reports its verdict, including ones that raise no alert', async () => {
   const h = harness({ crown: 0.1 });
   const verdicts = [];

@@ -5,7 +5,7 @@ import { buildAlerts, buildJoinAlerts, buildMark, buildNoteSubject, buildNoteMar
 import { ApiError } from "./client.js";
 import { isAdminLikeName } from "./names.js";
 import {
-  isMessage, parseAdmins, parseAnalysis, parseAvatar, parseJoin, parseMembership, parseNote, record,
+  isMessage, parseAdmins, parseAnalysis, parseAvatar, parseJoin, parseMemberUpdate, parseMembership, parseNote, record,
   type Admin, type Api, type Frame, type JoinedMember, type Message, type ScamAnalysis,
 } from "./protocol.js";
 
@@ -28,7 +28,8 @@ export type AlertEvent =
   | { kind: "scam"; probability: number }
   /** Stage one: the message was marked in the chat without mentioning anyone. */
   | { kind: "mark"; probability: number }
-  | { kind: "join"; crown: number | null | undefined; nameHit: boolean }
+  /** `changes` is set when a member changed their profile rather than joined. */
+  | { kind: "join"; crown: number | null | undefined; nameHit: boolean; changes?: ("name" | "picture")[] }
   | { kind: "note"; probability: number };
 
 interface Notification {
@@ -193,12 +194,14 @@ export class ScamGuard extends EventEmitter {
       }
       return;
     }
-    if (frame.type === "member:join" || frame.type === "chat:member-joined") {
-      const member = parseJoin(frame);
-      if (!member || !this.ready || !this.joinsSupported || this.channels.get(member.chatId) !== "square"
+    if (frame.type === "member:join" || frame.type === "chat:member-joined" || frame.type === "chat:member-updated") {
+      const member = frame.type === "chat:member-updated" ? parseMemberUpdate(frame) : parseJoin(frame);
+      // Managers may change their own profile freely; only ordinary members can be impostors.
+      if (!member || member.role || !this.ready || !this.joinsSupported || this.channels.get(member.chatId) !== "square"
         || member.userId === this.ownMembers.get(member.chatId)) return;
       const key = `join:${member.chatId}:${member.userId}`;
-      // A rejoin supersedes any check still pending for the earlier join.
+      // A rejoin or a newer profile supersedes any check still pending for the member, including
+      // a join still waiting for its picture: the newest picture is the one that matters.
       this.invalidate(key);
       if (this.queue.size >= MAX_QUEUE) {
         this.emit("notice", "ANALYSIS_QUEUE_FULL");
@@ -493,9 +496,14 @@ export class ScamGuard extends EventEmitter {
 
   private async inspectJoin(work: Work, member: JoinedMember): Promise<void> {
     // The picture first (Jev), then the name (local); either finding alone alerts the admins.
-    const nameHit = isAdminLikeName(member.displayName);
+    // A profile update checks only what changed, so an unchanged picture costs no Jev call.
+    // The patched backend judges only members it announced as joining.
+    const checksPicture = !member.changes || (member.changes.includes("picture") && !this.avatarViaBackend);
+    const nameHit = (!member.changes || member.changes.includes("name")) && isAdminLikeName(member.displayName);
     let crown: number | null | undefined;
-    if (this.avatarViaBackend) {
+    if (!checksPicture) {
+      // Nothing to judge: the name alone decides.
+    } else if (this.avatarViaBackend) {
       try {
         const result = await this.paced(work, this.checkQuotas,
           () => this.api.request("avatar:check", { chatId: member.chatId, memberId: member.userId }, "avatar:result"));
@@ -521,11 +529,12 @@ export class ScamGuard extends EventEmitter {
       }
     }
     const crownHit = typeof crown === "number" && crown >= this.options.crownThresholdPercent / 100;
-    // Every judged join is reported, alerting or not; ids and results only, never the name.
-    this.emit("join", { chatId: member.chatId, memberId: member.userId, crown, crownHit, nameHit, alert: crownHit || nameHit });
+    const changes = member.changes ? { changes: member.changes } : {};
+    // Every judged join or update is reported, alerting or not; ids and results only, never the name.
+    this.emit("join", { chatId: member.chatId, memberId: member.userId, crown, crownHit, nameHit, alert: crownHit || nameHit, ...changes });
     if (!crownHit && !nameHit) return;
     this.enqueue({
-      work, event: { kind: "join", crown, nameHit },
+      work, event: { kind: "join", crown, nameHit, ...changes },
       build: admins => buildJoinAlerts(member, { crown, crownHit, nameHit }, admins),
     });
   }

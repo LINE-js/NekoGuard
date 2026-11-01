@@ -118,6 +118,10 @@ export interface JoinedMember {
   displayName: string;
   /** Validated path on LINE's OpenChat CDN: hash preview or member-addressed picture. */
   picturePath?: string;
+  /** Only for `chat:member-updated`: what the member changed. A join has every field new. */
+  changes?: ("name" | "picture")[];
+  /** Only for `chat:member-updated`: set when LINE reports the member as a manager. */
+  role?: "admin" | "coAdmin";
 }
 
 /** `member:join` (NekoGuard patch) and `chat:member-joined` (newer LINE.js) share this shape. */
@@ -141,6 +145,17 @@ export function parseJoin(frame: Frame): JoinedMember | undefined {
     picturePath = `r/g2/member/${member.userId}`;
   }
   return { chatId: frame.chatId, userId: member.userId, displayName: member.displayName, ...(picturePath ? { picturePath } : {}) };
+}
+
+/** `chat:member-updated`: a join's fields plus what changed and the member's role. */
+export function parseMemberUpdate(frame: Frame): JoinedMember | undefined {
+  const member = parseJoin(frame);
+  const fields = frame.member;
+  if (!member || !record(fields) || !Array.isArray(fields.changes) || fields.changes.length === 0
+    || fields.changes.some(change => change !== "name" && change !== "picture")
+    || (fields.role !== undefined && fields.role !== "admin" && fields.role !== "coAdmin")) return undefined;
+  const changes = (["name", "picture"] as const).filter(change => (fields.changes as unknown[]).includes(change));
+  return { ...member, changes, ...(fields.role ? { role: fields.role as "admin" | "coAdmin" } : {}) };
 }
 
 /** Crown probability, or null when the member has no picture. */

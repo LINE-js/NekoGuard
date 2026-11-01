@@ -104,15 +104,20 @@ export interface JoinFindings {
 }
 
 export function buildJoinAlerts(
-  member: { userId: string; displayName: string },
+  member: { userId: string; displayName: string; changes?: readonly ('name' | 'picture')[] },
   findings: JoinFindings,
   admins: readonly Admin[],
 ): Alert[] {
   if (!findings.crownHit && !findings.nameHit) throw new Error('A join alert needs at least one finding.');
+  // A profile update judges only what changed; the rest was judged when it was set.
+  const pictureChecked = !member.changes || member.changes.includes('picture');
+  const nameChecked = !member.changes || member.changes.includes('name');
   // No picture means no crown: 0%. Only an unjudged picture has no number to show.
-  const crown = findings.crown === undefined ? '未能判定' : `${percentFormat.format((findings.crown ?? 0) * 100)}%`;
-  // Plain text, never a mention: the newcomer is untrusted and has not spoken in the chat.
-  const header = `疑似冒充管理員提醒\n新成員：${cleanName(member.displayName, '（未提供名稱）')}\n成員 ID：${stripControls(member.userId)}\n假皇冠機率：${crown}\n名稱含管理員相關字詞：${findings.nameHit ? '是' : '否'}\n此為自動判定，並非事實認定，請管理員查證。\n`;
+  const crown = !pictureChecked ? '大頭貼未變更' : findings.crown === undefined ? '未能判定' : `${percentFormat.format((findings.crown ?? 0) * 100)}%`;
+  const nameLine = !nameChecked ? '名稱未變更' : `名稱含管理員相關字詞：${findings.nameHit ? '是' : '否'}`;
+  const who = member.changes ? '成員更新個人檔案' : '新成員';
+  // Plain text, never a mention: the member is untrusted and may never have spoken in the chat.
+  const header = `疑似冒充管理員提醒\n${who}：${cleanName(member.displayName, '（未提供名稱）')}\n成員 ID：${stripControls(member.userId)}\n假皇冠機率：${crown}\n${nameLine}\n此為自動判定，並非事實認定，請管理員查證。\n`;
   return mentionAdmins(header, admins);
 }
 
