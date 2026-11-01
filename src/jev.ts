@@ -7,10 +7,10 @@ const MAX_BODY_CHARS = 64 * 1024;
 
 const CROWN_QUESTION = {
   type: "noul",
-  instructions: "Does `avatar` (a chat member's profile picture) show a crown?",
+  instructions: "Does `avatar` (a chat member's profile picture) show a crown? Impostors paste a fake chat administrator's crown badge onto an ordinary photo: usually a round sticker or circle, often in a corner and overlapping the subject, with a crown icon inside (often blue or gold). It may be large, small, blurry or low-resolution, and the rest of the picture (a person, animal, toy or scenery) does not matter.",
   criteria: {
-    true: "Any crown, tiara or crown symbol, emoji, icon or badge appears anywhere in the picture, including one drawn to look like a chat administrator's crown badge.",
-    false: "No crown, tiara or crown-like symbol appears in the picture.",
+    true: "Any crown, tiara or crown symbol, emoji, icon or badge appears anywhere in the picture, including a blurry or roughly drawn one, and especially a crown inside a circle or badge pasted onto the picture like a chat administrator's crown badge.",
+    false: "No crown, tiara or crown-like symbol appears anywhere in the picture.",
   },
 } as const;
 

@@ -848,26 +848,82 @@ test('a URL-only member avatar is downloaded and judged instead of reported as n
   assert.deepEqual(sends.flatMap(send => send.mentions.map(mention => mention.userId)), [admin.userId]);
 });
 
-test('member image download failures report an unknown crown result rather than zero', async () => {
+// A guard with a local crown checker behind a fake CDN and TypeSafe, as main.ts builds it with jev.token.
+async function crownGuard(cdn, guardOptions = {}) {
   const { CrownChecker } = await import('../dist/jev.js');
-  for (const [status, code] of [[403, 'CROWN_PICTURE_FORBIDDEN'], [404, 'CROWN_PICTURE_NOT_FOUND']]) {
-    const notices = [], verdicts = [];
-    const checker = new CrownChecker({ token: 'fixture', model: 'm', fetchImpl: async () => new Response('', { status }) });
-    const guard = new ScamGuard({ async request(type) {
-      assert.equal(type, 'chat:admins:get');
-      return { type: 'chat:admins', chatId, ownMemberId: ownId, admins: [admin] };
-    } }, { thresholdPercent: 70, crownThresholdPercent: 70, checkIntervalMs: 0, adminIntervalMs: 0, crown: path => checker.check(path) });
-    guard.on('notice', value => notices.push(value));
-    guard.on('join', value => verdicts.push(value));
-    guard.handle({ type: 'hello', protocol: 2, capabilities: ['chat:admins', 'chat:member-joined'] });
-    guard.handle({ type: 'auth:ready', profile: { userId } });
-    guard.handle({ type: 'channels', channels: [{ channelId: chatId, kind: 'square' }] });
-    guard.handle({ type: 'chat:member-joined', chatId, member: { userId: joinerId, displayName: '小明' } });
-    await guard.whenIdle();
-    assert.ok(notices.includes(code));
-    assert.deepEqual(verdicts, [{ chatId, memberId: joinerId, crown: undefined, crownHit: false, nameHit: false, alert: false }]);
+  const fetched = [], notices = [], verdicts = [], sends = [];
+  const checker = new CrownChecker({ token: 'fixture', model: 'm', fetchImpl: async (url) => {
+    if (url === 'https://api.typesafe.ai/v1/systemone') return Response.json({ answers: { crown: { noul: 0.93 } } });
+    fetched.push(url);
+    return cdn(fetched.length);
+  } });
+  const guard = new ScamGuard({ async request(type, fields) {
+    if (type === 'chat:admins:get') return { type: 'chat:admins', chatId, ownMemberId: ownId, admins: [admin] };
+    assert.equal(type, 'message:send');
+    sends.push(fields);
+    return { type: 'sent', messageId: '100' };
+  } }, { thresholdPercent: 70, crownThresholdPercent: 70, checkIntervalMs: 0, adminIntervalMs: 0, sendIntervalMs: 0, crown: path => checker.check(path), ...guardOptions });
+  guard.on('notice', value => notices.push(value));
+  guard.on('join', value => verdicts.push(value));
+  guard.handle({ type: 'hello', protocol: 2, capabilities: ['chat:admins', 'chat:member-joined'] });
+  guard.handle({ type: 'auth:ready', profile: { userId } });
+  guard.handle({ type: 'channels', channels: [{ channelId: chatId, kind: 'square' }] });
+  const joined = (displayName, memberId = joinerId) => guard.handle({ type: 'chat:member-joined', chatId, member: { userId: memberId, displayName } });
+  return { guard, fetched, notices, verdicts, sends, joined };
+}
+const jpeg = () => new Response(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]));
+
+test('member image download failures report an unknown crown result rather than zero, after retrying a missing picture', async () => {
+  for (const [status, code, fetches] of [[403, 'CROWN_PICTURE_FORBIDDEN', 1], [404, 'CROWN_PICTURE_NOT_FOUND', 3]]) {
+    const h = await crownGuard(() => new Response('', { status }), { pictureRetryMs: [0, 0] });
+    h.joined('小明');
+    await h.guard.whenIdle();
+    assert.equal(h.fetched.length, fetches, `${status}: only a missing picture is fetched again, until the retries run out`);
+    assert.deepEqual(h.notices.filter(notice => notice.startsWith('CROWN_')), [code]);
+    assert.deepEqual(h.verdicts, [{ chatId, memberId: joinerId, crown: undefined, crownHit: false, nameHit: false, alert: false }]);
   }
 });
+
+test('a joiner picture that reaches the CDN after the join is judged on a later attempt', async () => {
+  const h = await crownGuard(attempt => attempt < 3 ? new Response('', { status: 404 }) : jpeg(), { pictureRetryMs: [0, 0, 0, 0] });
+  h.joined('小明');
+  await h.guard.whenIdle();
+  assert.equal(h.fetched.length, 3);
+  assert.ok(!h.notices.includes('CROWN_PICTURE_NOT_FOUND'), 'a picture found on retry is not reported missing');
+  assert.deepEqual(h.verdicts, [{ chatId, memberId: joinerId, crown: 0.93, crownHit: true, nameHit: false, alert: true }]);
+  assert.deepEqual(h.sends.flatMap(send => send.mentions.map(mention => mention.userId)), [admin.userId]);
+
+  // An admin-like name alerts at once instead of waiting for the picture.
+  const named = await crownGuard(() => new Response('', { status: 404 }), { pictureRetryMs: [0, 0] });
+  named.joined('群管');
+  await named.guard.whenIdle();
+  assert.equal(named.fetched.length, 1);
+  assert.deepEqual(named.verdicts, [{ chatId, memberId: joinerId, crown: undefined, crownHit: false, nameHit: true, alert: true }]);
+});
+
+test('joins waiting for their picture hold no analysis slot, and a rejoin or logout cancels the wait', async () => {
+  const scanned = [];
+  const h = await crownGuard(() => new Response('', { status: 404 }), {
+    pictureRetryMs: [60_000], scam: async (text) => { scanned.push(text); return { probability: 0 }; },
+  });
+  for (let index = 0; index < 6; index++) h.joined('小明', 'p' + String(index).repeat(32));
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(h.fetched.length, 6, 'all six joins tried their picture once');
+  h.guard.handle({ type: 'message', message: message(1) });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.deepEqual(scanned, ['投資邀請'], 'a message is checked while six joins wait on the CDN');
+  // A rejoin replaces the waiting check with a fresh one.
+  h.joined('小明', 'p' + '0'.repeat(32));
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(h.fetched.length, 7);
+  const started = performance.now();
+  h.guard.handle({ type: 'auth:state', state: 'idle' });
+  await h.guard.whenIdle();
+  assert.ok(performance.now() - started < 1000, 'logging out drops every pending retry');
+  assert.equal(h.fetched.length, 7);
+  assert.deepEqual(h.verdicts, []);
+});
+
 test('every judged join reports its verdict, including ones that raise no alert', async () => {
   const h = harness({ crown: 0.1 });
   const verdicts = [];

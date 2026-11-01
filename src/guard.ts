@@ -20,6 +20,8 @@ interface Work {
   join?: JoinedMember;
   /** Bounded author label, retained only until the note analysis starts. */
   noteSubject?: string;
+  /** Picture fetches already retried for a join whose picture was not on the CDN yet. */
+  pictureRetries?: number;
 }
 
 export type AlertEvent =
@@ -55,12 +57,17 @@ interface GuardOptions {
   sendIntervalMs?: number;
   adminIntervalMs?: number;
   membershipIntervalMs?: number;
+  /** Test seam: delays before each retry of a join picture that is not on the CDN yet. */
+  pictureRetryMs?: readonly number[];
 }
 
 const MAX_QUEUE = 500;
 const MAX_RECENT = 5000;
 const MAX_IN_FLIGHT = 4;
 const MARK_SUFFIX = "#mark";
+// LINE stores a joiner's picture on the CDN only after the join notification, so a check at once
+// often gets 404 for a picture that appears moments later. About four minutes in total.
+const PICTURE_RETRY_MS = [5_000, 15_000, 30_000, 60_000, 120_000];
 
 export class ScamGuard extends EventEmitter {
   private ready = false;
@@ -79,6 +86,8 @@ export class ScamGuard extends EventEmitter {
   private recent = new Map<string, Work>();
   private queue = new Map<string, Work>();
   private running = new Set<Promise<void>>();
+  /** Joins waiting to fetch their picture again; they hold no analysis slot meanwhile. */
+  private retrying = new Set<Promise<void>>();
   /** Works awaiting an intent review; bounded by MAX_IN_FLIGHT separately from Jev checks. */
   private reviewing = 0;
   private reviewWaiters = new Set<() => void>();
@@ -265,8 +274,8 @@ export class ScamGuard extends EventEmitter {
   }
 
   async whenIdle(): Promise<void> {
-    while (this.running.size || this.notifying.size) {
-      await Promise.all([...this.running, ...this.notifying.values()]);
+    while (this.running.size || this.notifying.size || this.retrying.size) {
+      await Promise.all([...this.running, ...this.notifying.values(), ...this.retrying]);
     }
   }
 
@@ -484,6 +493,7 @@ export class ScamGuard extends EventEmitter {
 
   private async inspectJoin(work: Work, member: JoinedMember): Promise<void> {
     // The picture first (Jev), then the name (local); either finding alone alerts the admins.
+    const nameHit = isAdminLikeName(member.displayName);
     let crown: number | null | undefined;
     if (this.avatarViaBackend) {
       try {
@@ -504,12 +514,13 @@ export class ScamGuard extends EventEmitter {
         if (!this.current(work)) return;
       } catch (error) {
         if (!this.current(work)) return;
+        // A name finding is reported at once rather than held back for the picture.
+        if (error instanceof Error && error.message === "CROWN_PICTURE_NOT_FOUND" && !nameHit && this.retryPicture(work)) return;
         // Only our own fixed codes: never a response body, picture or key.
         this.emit("notice", error instanceof Error && /^CROWN_[A-Z_]+$/.test(error.message) ? error.message : "CROWN_CHECK_FAILED");
       }
     }
     const crownHit = typeof crown === "number" && crown >= this.options.crownThresholdPercent / 100;
-    const nameHit = isAdminLikeName(member.displayName);
     // Every judged join is reported, alerting or not; ids and results only, never the name.
     this.emit("join", { chatId: member.chatId, memberId: member.userId, crown, crownHit, nameHit, alert: crownHit || nameHit });
     if (!crownHit && !nameHit) return;
@@ -517,6 +528,22 @@ export class ScamGuard extends EventEmitter {
       work, event: { kind: "join", crown, nameHit },
       build: admins => buildJoinAlerts(member, { crown, crownHit, nameHit }, admins),
     });
+  }
+
+  /** Fetches the picture again later, outside the analysis slots; false once retries run out. */
+  private retryPicture(work: Work): boolean {
+    const attempt = work.pictureRetries ?? 0;
+    const delayMs = (this.options.pictureRetryMs ?? PICTURE_RETRY_MS)[attempt];
+    if (delayMs === undefined) return false;
+    work.pictureRetries = attempt + 1;
+    // Aborted by a rejoin, an invalidation or a reset; only a still-current join is queued again.
+    const task: Promise<void> = this.wait(work, delayMs).then(() => {
+      if (!this.current(work)) return;
+      this.queue.set(work.key, work);
+      this.start();
+    }, () => undefined).finally(() => this.retrying.delete(task));
+    this.retrying.add(task);
+    return true;
   }
 
   /**
